@@ -680,6 +680,7 @@ function PendingUsersPanel({ onRefresh }) {
 // === Main Admin Component ===
 export default function Admin({ session, onBack }) {
   const [tab, setTab] = useState("stores");
+  const [pendingCount, setPendingCount] = useState(0);
   const [stores, setStores] = useState([]);
   const [usersData, setUsersData] = useState([]);
   const [apiKeys, setApiKeys] = useState([]);
@@ -719,6 +720,10 @@ export default function Admin({ session, onBack }) {
       // 企業一覧
       const { data: compData } = await supabase.from("companies").select("*").order("name");
       setCompaniesList(compData || []);
+
+      // 申請件数
+      const { count: pc } = await supabase.from("users").select("*", { count: "exact", head: true }).eq("is_approved", false);
+      setPendingCount(pc || 0);
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [session]);
@@ -802,8 +807,9 @@ export default function Admin({ session, onBack }) {
       <main style={S.main}>
         <div style={S.tabs}>
           {tabs.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)} style={S.tab(tab === t.id)}>
+            <button key={t.id} onClick={() => setTab(t.id)} style={{...S.tab(tab === t.id), position:"relative"}}>
               <t.icon size={14}/> {t.label}
+              {t.id === "pending" && pendingCount > 0 && <span style={{ position:"absolute", top:-4, right:-4, background:"#ef4444", color:"#fff", fontSize:9, fontWeight:800, borderRadius:10, minWidth:18, height:18, display:"flex", alignItems:"center", justifyContent:"center", padding:"0 4px" }}>{pendingCount}</span>}
             </button>
           ))}
         </div>
