@@ -393,6 +393,106 @@ function UsageStats({ stores }) {
   );
 }
 
+// === Company Management (会社管理) ===
+function CompanyPanel() {
+  const [companies, setCompanies] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ name: "", company_code: "" });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase.from('companies').select('*').order('created_at');
+    setCompanies(data || []);
+    setLoading(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const startEdit = (c) => { setEditing(c.id); setForm({ name: c.name, company_code: c.company_code || "" }); setErr(""); };
+  const startNew = () => { setEditing("new"); setForm({ name: "", company_code: "" }); setErr(""); };
+  const cancel = () => { setEditing(null); setErr(""); };
+
+  const save = async () => {
+    if (!form.name.trim()) { setErr("会社名を入力してください"); return; }
+    if (!form.company_code.trim()) { setErr("会社コードを入力してください"); return; }
+    setSaving(true); setErr("");
+    try {
+      const payload = { name: form.name.trim(), company_code: form.company_code.trim().toUpperCase() };
+      if (editing === "new") {
+        payload.code = payload.company_code;
+        const { error } = await supabase.from('companies').insert(payload);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('companies').update(payload).eq('id', editing);
+        if (error) throw error;
+      }
+      setEditing(null); load();
+    } catch (e) { setErr(e.message); }
+    setSaving(false);
+  };
+
+  const toggleActive = async (id, isActive) => {
+    await supabase.from('companies').update({ is_active: !isActive }).eq('id', id);
+    load();
+  };
+
+  if (loading) return <div style={{ textAlign:"center", padding:30 }}><Loader2 size={24} style={{ animation:"spin 1s linear infinite", color:"#94a3b8" }}/></div>;
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+        <div style={{ fontSize:14, fontWeight:800, color:"#0f172a" }}>登録企業 ({companies.length})</div>
+        <button onClick={startNew} style={{ background:"linear-gradient(135deg,#0d9488,#0f766e)", color:"#fff", border:"none", borderRadius:10, padding:"8px 16px", fontSize:12, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+          <Plus size={14}/> 新規追加
+        </button>
+      </div>
+
+      {editing && (
+        <div style={{ background:"#f8fafc", borderRadius:12, padding:16, border:"1px solid #e2e8f0", marginBottom:12 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:"#0f172a", marginBottom:10 }}>{editing === "new" ? "新しい企業を追加" : "企業を編集"}</div>
+          <div style={{ marginBottom:8 }}>
+            <label style={{ fontSize:11, fontWeight:700, color:"#475569", display:"block", marginBottom:3 }}>会社名</label>
+            <input style={{ width:"100%", padding:"9px 12px", border:"2px solid #e2e8f0", borderRadius:10, fontSize:13, outline:"none", boxSizing:"border-box" }} value={form.name} onChange={e => setForm(p => ({...p, name: e.target.value}))} placeholder="例: ○○薬局グループ" />
+          </div>
+          <div style={{ marginBottom:10 }}>
+            <label style={{ fontSize:11, fontWeight:700, color:"#475569", display:"block", marginBottom:3 }}>会社コード（ログイン時に使用）</label>
+            <input style={{ width:"100%", padding:"9px 12px", border:"2px solid #e2e8f0", borderRadius:10, fontSize:13, outline:"none", boxSizing:"border-box", fontFamily:"monospace", letterSpacing:2 }} value={form.company_code} onChange={e => setForm(p => ({...p, company_code: e.target.value}))} placeholder="例: AKAKABE" />
+            <div style={{ fontSize:10, color:"#94a3b8", marginTop:2 }}>半角英数字。スタッフがログイン時に入力するコードです。</div>
+          </div>
+          {err && <div style={{ fontSize:11, color:"#dc2626", marginBottom:8, padding:"5px 8px", background:"#fef2f2", borderRadius:6 }}>{err}</div>}
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={save} disabled={saving} style={{ background:"linear-gradient(135deg,#0d9488,#0f766e)", color:"#fff", border:"none", borderRadius:8, padding:"8px 16px", fontSize:12, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
+              {saving ? <Loader2 size={12} style={{ animation:"spin 1s linear infinite" }}/> : <Save size={12}/>} 保存
+            </button>
+            <button onClick={cancel} style={{ background:"#f1f5f9", color:"#64748b", border:"none", borderRadius:8, padding:"8px 16px", fontSize:12, fontWeight:700, cursor:"pointer" }}>キャンセル</button>
+          </div>
+        </div>
+      )}
+
+      {companies.map(c => (
+        <div key={c.id} style={{ background:"#fff", borderRadius:12, padding:"14px 18px", border:"1px solid #e8ecf0", marginBottom:8 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <Building2 size={20} color={c.is_active ? "#6366f1" : "#94a3b8"} />
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:14, fontWeight:800, color:c.is_active ? "#0f172a" : "#94a3b8" }}>{c.name}</div>
+              <div style={{ fontSize:11, color:"#64748b" }}>
+                コード: <span style={{ fontFamily:"monospace", fontWeight:700 }}>{c.company_code || "未設定"}</span>
+                {!c.is_active && <span style={{ fontSize:10, fontWeight:700, color:"#ef4444", background:"#fef2f2", padding:"1px 6px", borderRadius:4, marginLeft:6 }}>無効</span>}
+              </div>
+            </div>
+            <button onClick={() => startEdit(c)} style={{ background:"#f1f5f9", border:"none", borderRadius:8, padding:"6px 10px", cursor:"pointer" }}><Edit3 size={12} color="#64748b"/></button>
+            <button onClick={() => toggleActive(c.id, c.is_active)} style={{ background:"#f1f5f9", border:"none", borderRadius:8, padding:"6px 10px", cursor:"pointer" }}>
+              {c.is_active ? <XCircle size={12} color="#ef4444"/> : <CheckCircle size={12} color="#059669"/>}
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // === Pending Users (申請一覧) ===
 function PendingUsersPanel({ onRefresh }) {
   const [pending, setPending] = useState([]);
@@ -574,6 +674,7 @@ export default function Admin({ session, onBack }) {
 
   const tabs = [
     { id:"pending", label:"申請", icon:UserCheck },
+    { id:"company", label:"会社管理", icon:Building2 },
     { id:"stores", label:"店舗管理", icon:Building2 },
     { id:"users", label:"ユーザー", icon:Users },
     { id:"apikeys", label:"API設定", icon:Key },
@@ -711,6 +812,14 @@ export default function Admin({ session, onBack }) {
 
         {/* ========== 申請一覧 ========== */}
         {tab === "pending" && <PendingUsersPanel onRefresh={loadData}/>}
+
+        {/* ========== 会社管理 ========== */}
+        {tab === "company" && (
+          <div style={S.card}>
+            <div style={S.cardTitle}><Building2 size={18} color="#6366f1"/> 会社管理</div>
+            <CompanyPanel />
+          </div>
+        )}
       </main>
 
       {/* Modals */}
