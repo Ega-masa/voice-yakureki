@@ -33,7 +33,7 @@ function buildDisplayText(soap){return SOAP_KEYS.filter(s=>soap[s.key]?.trim()).
 
 function toWav16k(buf){const t=16000,s=buf.getChannelData(0),r=buf.sampleRate/t,l=Math.floor(s.length/r),a=new ArrayBuffer(44+l*2),v=new DataView(a);const w=(o,x)=>{for(let i=0;i<x.length;i++)v.setUint8(o+i,x.charCodeAt(i));};w(0,"RIFF");v.setUint32(4,36+l*2,true);w(8,"WAVE");w(12,"fmt ");v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,t,true);v.setUint32(28,t*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,"data");v.setUint32(40,l*2,true);let o=44;for(let i=0;i<l;i++){const idx=Math.min(Math.floor(i*r),s.length-1),x=Math.max(-1,Math.min(1,s[idx]));v.setInt16(o,x<0?x*0x8000:x*0x7FFF,true);o+=2;}return new Blob([a],{type:"audio/wav"});}
 async function decodeBlob(b){const a=await b.arrayBuffer(),c=new AudioContext(),d=await c.decodeAudioData(a);c.close();return d;}
-async function transcribeAudio(w,k){const f=new FormData();f.append("file",w,"recording.wav");f.append("model","openai/whisper-large-v3");f.append("language","ja");const r=await fetch("https://api.together.xyz/v1/audio/transcriptions",{method:"POST",headers:{Authorization:`Bearer ${k}`},body:f});if(!r.ok){const t=await r.text();let m;try{m=JSON.parse(t).error?.message||t;}catch{m=t;}throw new Error(m);}return(await r.json()).text||"";}
+async function transcribeAudio(w,k){const f=new FormData();f.append("file",w,"recording.wav");f.append("model","whisper-large-v3-turbo");f.append("language","ja");const r=await fetch("https://api.groq.com/openai/v1/audio/transcriptions",{method:"POST",headers:{Authorization:`Bearer ${k}`},body:f});if(!r.ok){const t=await r.text();let m;try{m=JSON.parse(t).error?.message||t;}catch{m=t;}throw new Error(m);}return(await r.json()).text||"";}
 async function classifySOAP(transcript){const r=await fetch("/api/soap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({transcript})});const d=await r.json();if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);return d.soap;}
 
 // ======================================
@@ -205,7 +205,7 @@ export default function App(){
     else{setShowStorePicker(true);}
   })();},[session]);
   // API key from DB
-  useEffect(()=>{if(!currentStore)return;(async()=>{const key=await getApiKey("together_ai",currentStore.id);setApiKey(key);})();},[currentStore]);
+  useEffect(()=>{if(!currentStore)return;(async()=>{const key=await getApiKey("groq",currentStore.id);setApiKey(key);})();},[currentStore]);
   // Hash routing
   useEffect(()=>{const h=()=>setPage(window.location.hash==="#admin"?"admin":"app");window.addEventListener("hashchange",h);return()=>window.removeEventListener("hashchange",h);},[]);
   // Timer

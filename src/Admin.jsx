@@ -297,7 +297,8 @@ function ApiKeySection({ apiKeys, onRefresh }) {
   };
 
   const addKey = async (service) => {
-    const key = prompt(`${service === "together_ai" ? "Together AI" : "Anthropic"} APIキーを入力:`);
+    const labels = { groq: "Groq（音声認識）", anthropic: "Anthropic（SOAP分類）" };
+    const key = prompt(`${labels[service] || service} APIキーを入力:`);
     if (!key) return;
     try {
       await supabase.from("api_keys").insert({ store_id: null, service, api_key: key, is_active: true });
@@ -305,8 +306,8 @@ function ApiKeySection({ apiKeys, onRefresh }) {
     } catch (e) { alert(e.message); }
   };
 
-  const services = ["together_ai", "anthropic"];
-  const serviceLabels = { together_ai: "Together AI（音声認識）", anthropic: "Anthropic（SOAP分類）" };
+  const services = ["groq", "anthropic"];
+  const serviceLabels = { groq: "Groq（音声認識・Whisper）", anthropic: "Anthropic（SOAP分類・Haiku）" };
 
   return (
     <div>
