@@ -1,6 +1,6 @@
-// voice-yakureki v4.0.0 Admin.jsx
-// 管理画面: 店舗管理 / ユーザー管理 / API設定 / 使用統計
-import { useState, useEffect, useCallback } from "react";
+// voice-yakureki v5.4.0 Admin.jsx
+// 管理画面: 店舗管理 / ユーザー管理 / API設定 / 使用統計（Phase A リニューアル）
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { supabase } from "./supabase";
 import { 
   Building2, Users, Key, BarChart3, Plus, Trash2, Edit3, Save, X, 
@@ -378,105 +378,363 @@ function ApiKeySection({ apiKeys, onRefresh }) {
   );
 }
 
-// === Usage Stats ===
-function UsageStats({ stores }) {
-  const [stats, setStats] = useState(null);
+// === Usage Stats (Phase A リニューアル) ===
+const DAYS_JP = ["日","月","火","水","木","金","土"];
+const fmtDur = (sec) => {
+  if (!sec) return "0秒";
+  if (sec < 60) return `${sec}秒`;
+  if (sec < 3600) return `${Math.floor(sec/60)}分${sec%60}秒`;
+  return `${Math.floor(sec/3600)}時間${Math.floor((sec%3600)/60)}分`;
+};
+const fmtDateShort = (d) => `${d.getMonth()+1}/${d.getDate()}`;
+const toJSTDate = (d) => { const t = new Date(d); t.setHours(t.getHours()+9); return t.toISOString().slice(0,10); };
+
+// ヒートマップの色（0〜1の強度 → 色）
+const heatColor = (intensity) => {
+  if (intensity === 0) return "#f8fafc";
+  if (intensity < 0.2) return "#e0e7ff";
+  if (intensity < 0.4) return "#c7d2fe";
+  if (intensity < 0.6) return "#a5b4fc";
+  if (intensity < 0.8) return "#818cf8";
+  return "#6366f1";
+};
+
+function UsageStats({ stores, companies }) {
+  const [hourlyData, setHourlyData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState("7d");
+  const [period, setPeriod] = useState("30d");
+  const [view, setView] = useState("overview"); // overview | heatmap | calendar
+  const [filterCompany, setFilterCompany] = useState("all");
+  const [filterStore, setFilterStore] = useState("all");
+  const [calMonth, setCalMonth] = useState(() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}`; });
 
   const loadStats = useCallback(async () => {
     setLoading(true);
-    const days = period === "7d" ? 7 : period === "30d" ? 30 : 1;
-    const since = new Date(Date.now() - days * 86400000).toISOString();
-    
     try {
-      // レコード数を集計
-      const { data: records } = await supabase.from("records").select("id, store_id, duration_sec, created_at").gte("created_at", since);
-      
-      // 店舗別の集計
-      const byStore = {};
-      (records || []).forEach(r => {
-        const sid = r.store_id || "unlinked";
-        if (!byStore[sid]) byStore[sid] = { count: 0, duration: 0 };
-        byStore[sid].count++;
-        byStore[sid].duration += r.duration_sec || 0;
-      });
+      const days = period === "7d" ? 7 : period === "30d" ? 30 : period === "90d" ? 90 : 1;
+      const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
 
-      setStats({
-        total: (records || []).length,
-        totalDuration: (records || []).reduce((a, r) => a + (r.duration_sec || 0), 0),
-        byStore,
-        storeCount: stores.length,
-      });
-    } catch (e) { console.error(e); }
+      let q = supabase.from("hourly_stats").select("*").gte("stat_date", since);
+      if (filterCompany !== "all") q = q.eq("company_id", filterCompany);
+      if (filterStore !== "all") q = q.eq("store_id", filterStore);
+
+      const { data, error } = await q.order("stat_date", { ascending: true });
+      if (error) throw error;
+      setHourlyData(data || []);
+    } catch (e) {
+      console.error("Stats load error:", e);
+      setHourlyData([]);
+    }
     setLoading(false);
-  }, [period, stores]);
+  }, [period, filterCompany, filterStore]);
 
   useEffect(() => { loadStats(); }, [loadStats]);
 
-  if (loading) return <div style={{ textAlign:"center", padding:30 }}><Loader2 size={24} style={{ animation:"spin 1s linear infinite", color:"#94a3b8" }}/></div>;
-  if (!stats) return null;
+  // === 集計 ===
+  const totalRecords = hourlyData.reduce((a, r) => a + r.record_count, 0);
+  const totalDuration = hourlyData.reduce((a, r) => a + r.total_duration_sec, 0);
+  const uniqueDates = [...new Set(hourlyData.map(r => r.stat_date))];
+  const activeStores = [...new Set(hourlyData.filter(r => r.store_id).map(r => r.store_id))];
+  const allUsers = new Set();
+  hourlyData.forEach(r => (r.user_ids || []).forEach(u => allUsers.add(u)));
 
-  const fmtDur = (sec) => {
-    if (sec < 60) return `${sec}秒`;
-    if (sec < 3600) return `${Math.floor(sec/60)}分${sec%60}秒`;
-    return `${Math.floor(sec/3600)}時間${Math.floor((sec%3600)/60)}分`;
-  };
+  // 店舗別集計
+  const byStore = {};
+  hourlyData.forEach(r => {
+    const sid = r.store_id || "unlinked";
+    if (!byStore[sid]) byStore[sid] = { count: 0, duration: 0 };
+    byStore[sid].count += r.record_count;
+    byStore[sid].duration += r.total_duration_sec;
+  });
+  const storeRanking = Object.entries(byStore)
+    .map(([id, d]) => ({ id, ...d, name: stores.find(s => s.id === id)?.name || "未紐付け" }))
+    .sort((a, b) => b.count - a.count);
+  const maxStoreCount = Math.max(...storeRanking.map(s => s.count), 1);
+
+  // 日別集計
+  const byDate = {};
+  hourlyData.forEach(r => {
+    if (!byDate[r.stat_date]) byDate[r.stat_date] = { count: 0, duration: 0 };
+    byDate[r.stat_date].count += r.record_count;
+    byDate[r.stat_date].duration += r.total_duration_sec;
+  });
+  const sortedDates = Object.keys(byDate).sort();
+  const maxDayCount = Math.max(...Object.values(byDate).map(d => d.count), 1);
+
+  // ヒートマップ集計 (曜日 × 時間帯)
+  const heatmapGrid = Array.from({ length: 7 }, () => Array(24).fill(0));
+  hourlyData.forEach(r => {
+    const dayOfWeek = new Date(r.stat_date + "T00:00:00+09:00").getDay();
+    heatmapGrid[dayOfWeek][r.stat_hour] += r.record_count;
+  });
+  const heatMax = Math.max(...heatmapGrid.flat(), 1);
+
+  // カレンダー用: 月別日次データ
+  const [calYear, calMonthNum] = calMonth.split("-").map(Number);
+  const calFirstDay = new Date(calYear, calMonthNum - 1, 1).getDay();
+  const calDaysInMonth = new Date(calYear, calMonthNum, 0).getDate();
+  const calData = {};
+  hourlyData.forEach(r => {
+    if (r.stat_date.startsWith(calMonth)) {
+      const day = parseInt(r.stat_date.slice(8, 10));
+      if (!calData[day]) calData[day] = { count: 0, duration: 0 };
+      calData[day].count += r.record_count;
+      calData[day].duration += r.total_duration_sec;
+    }
+  });
+  const calMaxCount = Math.max(...Object.values(calData).map(d => d.count), 1);
+
+  // フィルタ連動: 会社選択時の店舗リスト
+  const filteredStores = filterCompany === "all" ? stores : stores.filter(s => s.company_id === filterCompany);
+
+  const PeriodBtn = ({ id, label }) => (
+    <button onClick={() => setPeriod(id)} style={{
+      padding:"5px 12px", borderRadius:8, border:`1px solid ${period===id?"#6366f1":"#e2e8f0"}`,
+      background:period===id?"#eef2ff":"#fff", color:period===id?"#4f46e5":"#64748b",
+      fontSize:11, fontWeight:700, cursor:"pointer", transition:"all 0.15s"
+    }}>{label}</button>
+  );
+
+  const ViewBtn = ({ id, label }) => (
+    <button onClick={() => setView(id)} style={{
+      padding:"6px 14px", borderRadius:8, border:"none",
+      background:view===id?"#6366f1":"transparent", color:view===id?"#fff":"#94a3b8",
+      fontSize:11, fontWeight:700, cursor:"pointer", transition:"all 0.15s"
+    }}>{label}</button>
+  );
+
+  if (loading) return <div style={{ textAlign:"center", padding:30 }}><Loader2 size={24} style={{ animation:"spin 1s linear infinite", color:"#94a3b8" }}/></div>;
 
   return (
     <div>
-      <div style={{ display:"flex", gap:4, marginBottom:14 }}>
-        {[{id:"1d",label:"今日"},{id:"7d",label:"7日間"},{id:"30d",label:"30日間"}].map(p => (
-          <button key={p.id} onClick={() => setPeriod(p.id)} style={{
-            padding:"5px 12px", borderRadius:8, border:`1px solid ${period===p.id?"#6366f1":"#e2e8f0"}`, 
-            background:period===p.id?"#eef2ff":"#fff", color:period===p.id?"#4f46e5":"#64748b", 
-            fontSize:11, fontWeight:700, cursor:"pointer"
-          }}>{p.label}</button>
+      {/* フィルター行 */}
+      <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:14 }}>
+        <div style={{ display:"flex", gap:4 }}>
+          {[{id:"1d",l:"今日"},{id:"7d",l:"7日間"},{id:"30d",l:"30日間"},{id:"90d",l:"90日間"}].map(p => (
+            <PeriodBtn key={p.id} id={p.id} label={p.l}/>
+          ))}
+        </div>
+        {(companies||[]).length > 0 && (
+          <select value={filterCompany} onChange={e => { setFilterCompany(e.target.value); setFilterStore("all"); }} style={{
+            padding:"5px 8px", borderRadius:8, border:"1px solid #e2e8f0", fontSize:11, fontWeight:600, color:"#475569", cursor:"pointer", outline:"none"
+          }}>
+            <option value="all">全社</option>
+            {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        )}
+        {filteredStores.length > 0 && (
+          <select value={filterStore} onChange={e => setFilterStore(e.target.value)} style={{
+            padding:"5px 8px", borderRadius:8, border:"1px solid #e2e8f0", fontSize:11, fontWeight:600, color:"#475569", cursor:"pointer", outline:"none"
+          }}>
+            <option value="all">全店舗</option>
+            {filteredStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        )}
+      </div>
+
+      {/* サマリーカード */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:8, marginBottom:16 }}>
+        {[
+          { num: totalRecords, label: "録音件数", color: "#6366f1" },
+          { num: fmtDur(totalDuration), label: "録音時間", color: "#0d9488" },
+          { num: activeStores.length, label: "稼働店舗", color: "#d97706" },
+          { num: allUsers.size, label: "利用者数", color: "#db2777" },
+        ].map((c, i) => (
+          <div key={i} style={{ background:"#fff", borderRadius:12, padding:"14px 8px", border:"1px solid #e8ecf0", textAlign:"center", boxShadow:"0 1px 3px rgba(0,0,0,.03)" }}>
+            <div style={{ fontSize:22, fontWeight:900, color:c.color, lineHeight:1 }}>{c.num}</div>
+            <div style={{ fontSize:10, color:"#94a3b8", fontWeight:600, marginTop:4 }}>{c.label}</div>
+          </div>
         ))}
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:10, marginBottom:16 }}>
-        <div style={{...S.card, ...S.stat, marginBottom:0 }}>
-          <div style={S.statNum}>{stats.total}</div>
-          <div style={S.statLabel}>録音件数</div>
-        </div>
-        <div style={{...S.card, ...S.stat, marginBottom:0 }}>
-          <div style={S.statNum}>{fmtDur(stats.totalDuration)}</div>
-          <div style={S.statLabel}>録音時間</div>
-        </div>
-        <div style={{...S.card, ...S.stat, marginBottom:0 }}>
-          <div style={S.statNum}>{stats.storeCount}</div>
-          <div style={S.statLabel}>登録店舗</div>
-        </div>
+
+      {/* ビュー切替 */}
+      <div style={{ display:"flex", background:"#f1f5f9", borderRadius:10, padding:3, marginBottom:16, gap:2 }}>
+        <ViewBtn id="overview" label="概要"/>
+        <ViewBtn id="heatmap" label="ヒートマップ"/>
+        <ViewBtn id="calendar" label="カレンダー"/>
       </div>
-      {stores.length > 0 && (
+
+      {/* ========== 概要ビュー ========== */}
+      {view === "overview" && (
         <div>
-          <div style={{ fontSize:12, fontWeight:700, color:"#475569", marginBottom:8 }}>店舗別</div>
-          <table style={S.table}>
-            <thead><tr>
-              <th style={S.th}>店舗名</th>
-              <th style={S.th}>件数</th>
-              <th style={S.th}>録音時間</th>
-            </tr></thead>
-            <tbody>
-              {stores.map(s => {
-                const d = stats.byStore[s.id] || { count:0, duration:0 };
-                return (
-                  <tr key={s.id}>
-                    <td style={S.td}>{s.name}</td>
-                    <td style={S.td}>{d.count}件</td>
-                    <td style={S.td}>{fmtDur(d.duration)}</td>
-                  </tr>
-                );
-              })}
-              {stats.byStore.unlinked && (
-                <tr>
-                  <td style={{...S.td, color:"#94a3b8"}}>未紐付け</td>
-                  <td style={S.td}>{stats.byStore.unlinked.count}件</td>
-                  <td style={S.td}>{fmtDur(stats.byStore.unlinked.duration)}</td>
-                </tr>
+          {/* 日別推移 */}
+          {sortedDates.length > 0 && (
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:"#475569", marginBottom:10 }}>日別推移</div>
+              <div style={{ display:"flex", alignItems:"flex-end", gap:2, height:100, padding:"0 2px" }}>
+                {sortedDates.map(date => {
+                  const d = byDate[date];
+                  const h = Math.max((d.count / maxDayCount) * 90, 4);
+                  const dt = new Date(date + "T00:00:00+09:00");
+                  return (
+                    <div key={date} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", minWidth:0 }} title={`${fmtDateShort(dt)}: ${d.count}件 / ${fmtDur(d.duration)}`}>
+                      <div style={{ width:"100%", maxWidth:24, height:h, background:"linear-gradient(180deg,#818cf8,#6366f1)", borderRadius:"4px 4px 0 0", transition:"height 0.3s" }}/>
+                      {sortedDates.length <= 14 && (
+                        <div style={{ fontSize:8, color:"#94a3b8", marginTop:2, whiteSpace:"nowrap" }}>{fmtDateShort(dt)}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {sortedDates.length > 14 && (
+                <div style={{ display:"flex", justifyContent:"space-between", marginTop:4 }}>
+                  <span style={{ fontSize:9, color:"#94a3b8" }}>{sortedDates[0]}</span>
+                  <span style={{ fontSize:9, color:"#94a3b8" }}>{sortedDates[sortedDates.length-1]}</span>
+                </div>
               )}
-            </tbody>
-          </table>
+            </div>
+          )}
+
+          {/* 店舗別ランキング */}
+          {storeRanking.length > 0 && (
+            <div>
+              <div style={{ fontSize:12, fontWeight:700, color:"#475569", marginBottom:10 }}>店舗別</div>
+              {storeRanking.map((s, i) => (
+                <div key={s.id} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
+                  <div style={{ width:20, fontSize:12, fontWeight:800, color:i < 3 ? "#6366f1" : "#94a3b8", textAlign:"right" }}>{i+1}</div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                      <span style={{ fontSize:12, fontWeight:700, color:"#334155", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.name}</span>
+                      <span style={{ fontSize:11, fontWeight:600, color:"#6366f1", whiteSpace:"nowrap", marginLeft:8 }}>{s.count}件</span>
+                    </div>
+                    <div style={{ height:6, background:"#f1f5f9", borderRadius:3, overflow:"hidden" }}>
+                      <div style={{ height:"100%", width:`${(s.count / maxStoreCount) * 100}%`, background:"linear-gradient(90deg,#818cf8,#6366f1)", borderRadius:3, transition:"width 0.3s" }}/>
+                    </div>
+                    <div style={{ fontSize:9, color:"#94a3b8", marginTop:2 }}>{fmtDur(s.duration)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {totalRecords === 0 && <div style={S.empty}>この期間のデータはありません</div>}
+        </div>
+      )}
+
+      {/* ========== ヒートマップビュー ========== */}
+      {view === "heatmap" && (
+        <div>
+          <div style={{ fontSize:12, fontWeight:700, color:"#475569", marginBottom:10 }}>時間帯 × 曜日パターン</div>
+          <div style={{ fontSize:10, color:"#94a3b8", marginBottom:12 }}>録音が多い時間帯を濃い色で表示</div>
+          <div style={{ overflowX:"auto" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"32px repeat(24, 1fr)", gap:2, minWidth:540 }}>
+              {/* ヘッダー行: 時間 */}
+              <div/>
+              {Array.from({length:24}, (_,h) => (
+                <div key={h} style={{ fontSize:8, color:"#94a3b8", textAlign:"center", fontWeight:600 }}>
+                  {h % 3 === 0 ? `${h}` : ""}
+                </div>
+              ))}
+              {/* データ行: 曜日ごと */}
+              {[1,2,3,4,5,6,0].map(dow => (
+                <Fragment key={dow}>
+                  <div style={{ fontSize:10, fontWeight:700, color:dow===0||dow===6?"#ef4444":"#475569", display:"flex", alignItems:"center", justifyContent:"flex-end", paddingRight:4 }}>
+                    {DAYS_JP[dow]}
+                  </div>
+                  {Array.from({length:24}, (_,h) => {
+                    const val = heatmapGrid[dow][h];
+                    const intensity = val / heatMax;
+                    return (
+                      <div key={`${dow}-${h}`} title={`${DAYS_JP[dow]}曜 ${h}時: ${val}件`} style={{
+                        aspectRatio:"1", borderRadius:3, background:heatColor(intensity), cursor:"default",
+                        transition:"background 0.2s", minHeight:14
+                      }}/>
+                    );
+                  })}
+                </Fragment>
+              ))}
+            </div>
+          </div>
+          {/* 凡例 */}
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"flex-end", gap:4, marginTop:10 }}>
+            <span style={{ fontSize:9, color:"#94a3b8" }}>少ない</span>
+            {[0, 0.2, 0.4, 0.6, 0.8, 1].map(v => (
+              <div key={v} style={{ width:14, height:14, borderRadius:3, background:heatColor(v) }}/>
+            ))}
+            <span style={{ fontSize:9, color:"#94a3b8" }}>多い</span>
+          </div>
+          {/* 時間帯サマリー */}
+          <div style={{ marginTop:16 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:"#475569", marginBottom:6 }}>ピーク時間帯 TOP5</div>
+            {(() => {
+              const hourTotals = Array.from({length:24}, (_,h) => ({
+                hour: h, total: heatmapGrid.reduce((a, row) => a + row[h], 0)
+              })).sort((a,b) => b.total - a.total).slice(0, 5).filter(h => h.total > 0);
+              return hourTotals.map((h, i) => (
+                <div key={h.hour} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                  <span style={{ fontSize:11, fontWeight:800, color:i === 0 ? "#6366f1" : "#94a3b8", width:16 }}>{i+1}</span>
+                  <span style={{ fontSize:12, fontWeight:700, color:"#334155" }}>{h.hour}:00〜{h.hour+1}:00</span>
+                  <span style={{ fontSize:11, color:"#6366f1", fontWeight:600 }}>{h.total}件</span>
+                </div>
+              ));
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* ========== カレンダービュー ========== */}
+      {view === "calendar" && (
+        <div>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+            <button onClick={() => {
+              const d = new Date(calYear, calMonthNum - 2, 1);
+              setCalMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+            }} style={{ background:"none", border:"none", cursor:"pointer", fontSize:18, color:"#6366f1", fontWeight:700 }}>‹</button>
+            <div style={{ fontSize:14, fontWeight:800, color:"#0f172a" }}>{calYear}年{calMonthNum}月</div>
+            <button onClick={() => {
+              const d = new Date(calYear, calMonthNum, 1);
+              setCalMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+            }} style={{ background:"none", border:"none", cursor:"pointer", fontSize:18, color:"#6366f1", fontWeight:700 }}>›</button>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:2, marginBottom:4 }}>
+            {DAYS_JP.map((d, i) => (
+              <div key={d} style={{ fontSize:10, fontWeight:700, color:i===0||i===6?"#ef4444":"#94a3b8", textAlign:"center", padding:"4px 0" }}>{d}</div>
+            ))}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:2 }}>
+            {/* 先頭の空セル */}
+            {Array.from({length: calFirstDay}, (_, i) => <div key={`e${i}`}/>)}
+            {/* 日付セル */}
+            {Array.from({length: calDaysInMonth}, (_, i) => {
+              const day = i + 1;
+              const d = calData[day];
+              const intensity = d ? d.count / calMaxCount : 0;
+              const today = new Date();
+              const isToday = calYear === today.getFullYear() && calMonthNum === today.getMonth()+1 && day === today.getDate();
+              return (
+                <div key={day} title={d ? `${day}日: ${d.count}件 / ${fmtDur(d.duration)}` : `${day}日: データなし`} style={{
+                  aspectRatio:"1", borderRadius:6, background: d ? heatColor(intensity) : "#f8fafc",
+                  display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+                  border: isToday ? "2px solid #6366f1" : "1px solid #e8ecf0",
+                  cursor:"default", position:"relative", minHeight:36
+                }}>
+                  <div style={{ fontSize:11, fontWeight:isToday ? 800 : 600, color: d ? (intensity > 0.5 ? "#fff" : "#334155") : "#cbd5e1" }}>{day}</div>
+                  {d && <div style={{ fontSize:7, fontWeight:700, color: intensity > 0.5 ? "#e0e7ff" : "#6366f1" }}>{d.count}件</div>}
+                </div>
+              );
+            })}
+          </div>
+          {/* カレンダー月間サマリー */}
+          {(() => {
+            const monthTotal = Object.values(calData).reduce((a, d) => a + d.count, 0);
+            const monthDur = Object.values(calData).reduce((a, d) => a + d.duration, 0);
+            const activeDays = Object.keys(calData).length;
+            return monthTotal > 0 ? (
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:8, marginTop:12 }}>
+                <div style={{ textAlign:"center", padding:10, background:"#f8fafc", borderRadius:8 }}>
+                  <div style={{ fontSize:18, fontWeight:900, color:"#6366f1" }}>{monthTotal}</div>
+                  <div style={{ fontSize:9, color:"#94a3b8", fontWeight:600 }}>月間件数</div>
+                </div>
+                <div style={{ textAlign:"center", padding:10, background:"#f8fafc", borderRadius:8 }}>
+                  <div style={{ fontSize:18, fontWeight:900, color:"#0d9488" }}>{fmtDur(monthDur)}</div>
+                  <div style={{ fontSize:9, color:"#94a3b8", fontWeight:600 }}>月間録音時間</div>
+                </div>
+                <div style={{ textAlign:"center", padding:10, background:"#f8fafc", borderRadius:8 }}>
+                  <div style={{ fontSize:18, fontWeight:900, color:"#d97706" }}>{activeDays}日</div>
+                  <div style={{ fontSize:9, color:"#94a3b8", fontWeight:600 }}>稼働日数</div>
+                </div>
+              </div>
+            ) : null;
+          })()}
         </div>
       )}
     </div>
@@ -924,7 +1182,7 @@ export default function Admin({ session, onBack }) {
         {tab === "stats" && (
           <div style={S.card}>
             <div style={S.cardTitle}><BarChart3 size={18} color="#6366f1"/> 使用統計</div>
-            <UsageStats stores={stores}/>
+            <UsageStats stores={stores} companies={companiesList}/>
           </div>
         )}
 
