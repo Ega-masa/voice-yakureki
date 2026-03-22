@@ -1,4 +1,5 @@
 {
+  "buildCommand": "npm install && npx vite build",
   "functions": {
     "api/soap.js": {
       "memory": 256,
