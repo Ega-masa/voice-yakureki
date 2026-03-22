@@ -47,20 +47,23 @@ export async function getUserInfo(email) {
 }
 
 export async function ensureUser(userId, email, companyId, opts = {}) {
-  const { data: existing } = await supabase.from('users').select('id').eq('id', userId).single()
+  // 既存チェック
+  const { data: existing } = await supabase.from('users').select('id').eq('id', userId).maybeSingle()
   if (existing) {
     const updates = { company_id: companyId }
     if (opts.display_name) updates.display_name = opts.display_name
     if (opts.employee_id) updates.employee_id = opts.employee_id
-    await supabase.from('users').update(updates).eq('id', userId)
+    const { error } = await supabase.from('users').update(updates).eq('id', userId)
+    if (error) console.error('ensureUser update error:', error)
   } else {
-    await supabase.from('users').insert({
+    const { error } = await supabase.from('users').insert({
       id: userId, email, role: 'pharmacist',
       display_name: opts.display_name || email.split('@')[0],
       employee_id: opts.employee_id || '',
       company_id: companyId,
-      is_approved: false  // 新規は未承認
+      is_approved: false
     })
+    if (error) console.error('ensureUser insert error:', error)
   }
 }
 
