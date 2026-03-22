@@ -49,10 +49,11 @@ const ROLE_COLORS = {
 const ROLE_ICONS = { super_admin: ShieldCheck, store_admin: Shield, pharmacist: UserCheck };
 
 // === Store Form Modal ===
-function StoreFormModal({ store, onClose, onSave }) {
+function StoreFormModal({ store, companies, onClose, onSave }) {
   const [form, setForm] = useState({
     name: store?.name || "",
     name_kana: store?.name_kana || "",
+    company_id: store?.company_id || (companies?.[0]?.id || ""),
     max_users: store?.max_users || 10,
     memo: store?.memo || "",
   });
@@ -61,9 +62,10 @@ function StoreFormModal({ store, onClose, onSave }) {
 
   const handleSave = async () => {
     if (!form.name.trim()) { setErr("店舗名を入力してください"); return; }
+    if (!form.company_id) { setErr("会社を選択してください"); return; }
     setSaving(true); setErr("");
     try {
-      const payload = { name: form.name, name_kana: form.name_kana, max_users: form.max_users, memo: form.memo };
+      const payload = { name: form.name, name_kana: form.name_kana, company_id: form.company_id, max_users: form.max_users, memo: form.memo };
       if (store) {
         const { error } = await supabase.from("stores").update(payload).eq("id", store.id);
         if (error) throw error;
@@ -90,6 +92,13 @@ function StoreFormModal({ store, onClose, onSave }) {
         <div style={{ marginBottom:12 }}>
           <label style={S.label}>店舗名（フリガナ）</label>
           <input style={S.input} value={form.name_kana} onChange={e => setForm(p => ({...p, name_kana: e.target.value}))} placeholder="例: まるまるやっきょく ほんてん" />
+        </div>
+        <div style={{ marginBottom:12 }}>
+          <label style={S.label}>所属会社 *</label>
+          <select style={S.input} value={form.company_id} onChange={e => setForm(p => ({...p, company_id: e.target.value}))}>
+            <option value="">選択してください</option>
+            {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name} ({c.company_code})</option>)}
+          </select>
         </div>
         <div style={{ display:"flex", gap:12, marginBottom:12 }}>
           <div style={{ flex:1 }}>
@@ -475,7 +484,7 @@ function UsageStats({ stores }) {
 }
 
 // === Company Management (会社管理) ===
-function CompanyPanel() {
+function CompanyPanel({ onRefresh }) {
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
@@ -500,23 +509,22 @@ function CompanyPanel() {
     if (!form.company_code.trim()) { setErr("会社コードを入力してください"); return; }
     setSaving(true); setErr("");
     try {
-      const payload = { name: form.name.trim(), company_code: form.company_code.trim().toUpperCase() };
+      const payload = { name: form.name.trim(), company_code: form.company_code.trim().toUpperCase(), code: form.company_code.trim().toUpperCase() };
       if (editing === "new") {
-        payload.code = payload.company_code;
         const { error } = await supabase.from('companies').insert(payload);
         if (error) throw error;
       } else {
         const { error } = await supabase.from('companies').update(payload).eq('id', editing);
         if (error) throw error;
       }
-      setEditing(null); load();
+      setEditing(null); await load(); onRefresh();
     } catch (e) { setErr(e.message); }
     setSaving(false);
   };
 
   const toggleActive = async (id, isActive) => {
     await supabase.from('companies').update({ is_active: !isActive }).eq('id', id);
-    load();
+    await load(); onRefresh();
   };
 
   if (loading) return <div style={{ textAlign:"center", padding:30 }}><Loader2 size={24} style={{ animation:"spin 1s linear infinite", color:"#94a3b8" }}/></div>;
@@ -921,7 +929,7 @@ export default function Admin({ session, onBack }) {
         {tab === "company" && (
           <div style={S.card}>
             <div style={S.cardTitle}><Building2 size={18} color="#6366f1"/> 会社管理</div>
-            <CompanyPanel />
+            <CompanyPanel onRefresh={loadData} />
           </div>
         )}
       </main>
@@ -930,6 +938,7 @@ export default function Admin({ session, onBack }) {
       {showStoreForm !== null && (
         <StoreFormModal
           store={showStoreForm || null}
+          companies={companiesList}
           onClose={() => setShowStoreForm(null)}
           onSave={() => { setShowStoreForm(null); loadData(); }}
         />
