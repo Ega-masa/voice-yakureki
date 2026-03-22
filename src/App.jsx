@@ -241,18 +241,25 @@ export default function App(){
   // メイン画面
   // ======================================
   return(<div style={{minHeight:"100vh",background:"linear-gradient(168deg,#f0fdfa 0%,#f0f9ff 40%,#fafbfc 100%)",fontFamily:"'Noto Sans JP','Hiragino Sans',sans-serif"}}>
-    {/* ヘッダー：ロゴ + 店舗切替 + 管理 + 診断 + ログアウト */}
+    {/* ヘッダー */}
     <header style={{background:"#fff",borderBottom:"1px solid #e2e8f0",padding:"0 16px",position:"sticky",top:0,zIndex:50,boxShadow:"0 1px 4px rgba(0,0,0,.03)"}}>
-      <div style={{maxWidth:680,margin:"0 auto",display:"flex",alignItems:"center",height:50}}>
-        <div style={{width:30,height:30,borderRadius:8,background:"linear-gradient(135deg,#0d9488,#0f766e)",display:"flex",alignItems:"center",justifyContent:"center",marginRight:8}}><Mic size={15} color="#fff"/></div>
-        <div><div style={{fontSize:13,fontWeight:800,color:"#0f172a"}}>音声薬歴</div><div style={{fontSize:7,color:"#94a3b8",fontWeight:600,letterSpacing:1}}>{currentStore?.name||`v${APP_VERSION}`}</div></div>
+      <div style={{maxWidth:680,margin:"0 auto",display:"flex",alignItems:"center",height:46}}>
+        <div style={{width:28,height:28,borderRadius:8,background:"linear-gradient(135deg,#0d9488,#0f766e)",display:"flex",alignItems:"center",justifyContent:"center",marginRight:8}}><Mic size={14} color="#fff"/></div>
+        <div style={{fontSize:14,fontWeight:800,color:"#0f172a"}}>音声薬歴</div>
         <div style={{flex:1}}/>
-        <button onClick={()=>setShowStorePicker(true)} style={{background:"#f1f5f9",border:"none",borderRadius:8,height:30,padding:"0 10px",display:"flex",alignItems:"center",gap:4,cursor:"pointer"}} title="店舗切替"><Building2 size={13} color="#64748b"/><span style={{fontSize:9,fontWeight:700,color:"#64748b"}}>切替</span></button>
         {isAdmin&&<button onClick={()=>{window.location.hash="admin";setPage("admin");}} style={{background:"linear-gradient(135deg,#6366f1,#4f46e5)",border:"none",borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginLeft:4}} title="管理画面"><Shield size={14} color="#fff"/></button>}
         {isAdmin&&<button onClick={()=>setShowDiag(true)} style={{background:"#0f172a",border:"none",borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginLeft:4}} title="診断"><Activity size={14} color="#22d3ee"/></button>}
         <button onClick={async()=>{await signOut();setUserInfo(null);setCurrentStore(null);}} style={{background:"#fef2f2",border:"none",borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginLeft:4}} title="ログアウト"><LogOut size={14} color="#ef4444"/></button>
       </div>
     </header>
+    {/* ★ 店舗バー: 店舗名を大きく表示 + タップで切替 */}
+    <div onClick={()=>setShowStorePicker(true)} style={{background:"linear-gradient(135deg,#f0fdfa,#ecfeff)",borderBottom:"1px solid #ccfbf1",padding:"8px 16px",cursor:"pointer",maxWidth:"100%"}} title="タップして店舗を切替">
+      <div style={{maxWidth:680,margin:"0 auto",display:"flex",alignItems:"center",gap:8}}>
+        <Building2 size={16} color="#0d9488"/>
+        <span style={{fontSize:13,fontWeight:800,color:"#0f766e",flex:1}}>{currentStore?.name||"店舗を選択してください"}</span>
+        <span style={{fontSize:10,fontWeight:700,color:"#0d9488",background:"#fff",padding:"3px 10px",borderRadius:6,border:"1px solid #99f6e4"}}>切替</span>
+      </div>
+    </div>
 
     <main style={{maxWidth:680,margin:"0 auto",padding:"16px 14px 80px"}}>
       <style>{`@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.3)}} @keyframes spin{to{transform:rotate(360deg)}}`}</style>

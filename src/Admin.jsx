@@ -195,6 +195,86 @@ function UserAddModal({ stores, onClose, onSave }) {
   );
 }
 
+// === User Edit Modal ===
+function UserEditModal({ user, stores, onClose, onSave }) {
+  const [form, setForm] = useState({
+    display_name: user.display_name || "",
+    employee_id: user.employee_id || "",
+    role: user.role || "pharmacist",
+    store_id: user.user_stores?.[0]?.store_id || "",
+    is_approved: user.is_approved !== false,
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const handleSave = async () => {
+    setSaving(true); setErr("");
+    try {
+      const { error } = await supabase.from("users").update({
+        display_name: form.display_name,
+        employee_id: form.employee_id,
+        role: form.role,
+        is_approved: form.is_approved,
+      }).eq("id", user.id);
+      if (error) throw error;
+
+      // 店舗紐付け変更
+      if (form.store_id) {
+        await supabase.from("user_stores").delete().eq("user_id", user.id);
+        await supabase.from("user_stores").insert({ user_id: user.id, store_id: form.store_id, role: form.role === "store_admin" ? "store_admin" : "pharmacist" });
+      }
+      onSave();
+    } catch (e) { setErr(e.message); }
+    setSaving(false);
+  };
+
+  return (
+    <div style={S.modal} onClick={onClose}>
+      <div style={S.modalBox} onClick={e => e.stopPropagation()}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+          <h3 style={{ margin:0, fontSize:16, fontWeight:800 }}>ユーザーを編集</h3>
+          <button onClick={onClose} style={{ background:"#f1f5f9", border:"none", borderRadius:8, width:30, height:30, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}><X size={15} color="#64748b"/></button>
+        </div>
+        <div style={{ fontSize:12, color:"#64748b", marginBottom:12, padding:"6px 10px", background:"#f8fafc", borderRadius:8 }}>{user.email}</div>
+        <div style={{ marginBottom:10 }}>
+          <label style={S.label}>氏名</label>
+          <input style={S.input} value={form.display_name} onChange={e => setForm(p => ({...p, display_name: e.target.value}))} placeholder="氏名" />
+        </div>
+        <div style={{ marginBottom:10 }}>
+          <label style={S.label}>社員番号</label>
+          <input style={S.input} value={form.employee_id} onChange={e => setForm(p => ({...p, employee_id: e.target.value}))} placeholder="社員番号" />
+        </div>
+        <div style={{ marginBottom:10 }}>
+          <label style={S.label}>ロール</label>
+          <select style={S.input} value={form.role} onChange={e => setForm(p => ({...p, role: e.target.value}))}>
+            <option value="pharmacist">薬剤師</option>
+            <option value="store_admin">店舗管理者</option>
+            <option value="super_admin">全体管理者</option>
+          </select>
+        </div>
+        <div style={{ marginBottom:10 }}>
+          <label style={S.label}>所属店舗</label>
+          <select style={S.input} value={form.store_id} onChange={e => setForm(p => ({...p, store_id: e.target.value}))}>
+            <option value="">未所属</option>
+            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+        <div style={{ marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>
+          <label style={{ fontSize:12, fontWeight:700, color:"#475569", cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+            <input type="checkbox" checked={form.is_approved} onChange={e => setForm(p => ({...p, is_approved: e.target.checked}))} style={{ width:16, height:16 }}/>
+            承認済み
+          </label>
+        </div>
+        {err && <div style={{ fontSize:11, color:"#dc2626", marginBottom:8, padding:"6px 10px", background:"#fef2f2", borderRadius:8 }}>{err}</div>}
+        <button onClick={handleSave} disabled={saving} style={S.btn()}>
+          {saving ? <Loader2 size={14} style={{ animation:"spin 1s linear infinite" }}/> : <Save size={14}/>}
+          保存
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // === API Key Section ===
 function ApiKeySection({ apiKeys, onRefresh }) {
   const [showKey, setShowKey] = useState({});
@@ -598,6 +678,9 @@ export default function Admin({ session, onBack }) {
   const [loading, setLoading] = useState(true);
   const [showStoreForm, setShowStoreForm] = useState(null); // null=closed, false=new, object=edit
   const [showUserAdd, setShowUserAdd] = useState(false);
+  const [showUserEdit, setShowUserEdit] = useState(null); // null=closed, object=edit
+  const [companiesList, setCompaniesList] = useState([]);
+  const [storeFilterCompany, setStoreFilterCompany] = useState("all");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -623,6 +706,10 @@ export default function Admin({ session, onBack }) {
       // APIキー一覧
       const { data: keyData } = await supabase.from("api_keys").select("*").order("created_at");
       setApiKeys(keyData || []);
+
+      // 企業一覧
+      const { data: compData } = await supabase.from("companies").select("*").order("name");
+      setCompaniesList(compData || []);
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [session]);
@@ -723,10 +810,23 @@ export default function Admin({ session, onBack }) {
                 </button>
               )}
             </div>
-            {stores.length === 0 ? (
+            {/* ★ 会社フィルター */}
+            {companiesList.length > 1 && (
+              <div style={{ marginBottom:12, display:"flex", alignItems:"center", gap:8 }}>
+                <Building2 size={14} color="#6366f1"/>
+                <span style={{ fontSize:11, fontWeight:700, color:"#475569" }}>会社で絞り込み:</span>
+                <select value={storeFilterCompany} onChange={e => setStoreFilterCompany(e.target.value)} style={{ flex:1, padding:"6px 10px", border:"2px solid #e2e8f0", borderRadius:8, fontSize:12, fontWeight:600, color:"#0f172a", outline:"none", cursor:"pointer" }}>
+                  <option value="all">すべての会社</option>
+                  {companiesList.map(c => <option key={c.id} value={c.id}>{c.name} ({c.company_code})</option>)}
+                </select>
+              </div>
+            )}
+            {(() => {
+              const filtered = storeFilterCompany === "all" ? stores : stores.filter(s => s.company_id === storeFilterCompany);
+              return filtered.length === 0 ? (
               <div style={S.empty}>まだ店舗が登録されていません</div>
             ) : (
-              stores.map(s => (
+              filtered.map(s => (
                 <div key={s.id} style={S.card}>
                   <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                     <Building2 size={20} color={s.is_active ? "#0d9488" : "#94a3b8"}/>
@@ -751,7 +851,7 @@ export default function Admin({ session, onBack }) {
                   {s.memo && <div style={{ fontSize:11, color:"#94a3b8", marginTop:6, paddingLeft:30 }}>{s.memo}</div>}
                 </div>
               ))
-            )}
+            )})()}
           </div>
         )}
 
@@ -779,10 +879,13 @@ export default function Admin({ session, onBack }) {
                         <div style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>{u.display_name || u.email}</div>
                         <div style={{ fontSize:11, color:"#94a3b8" }}>
                           {u.email}
+                          {u.employee_id && <span> / {u.employee_id}</span>}
                           {storeNames.length > 0 && <span> — {storeNames.join(", ")}</span>}
                         </div>
                       </div>
+                      {u.is_approved===false && <span style={S.badge("#d97706","#fffbeb")}>未承認</span>}
                       <span style={S.badge(rc.color, rc.bg)}>{ROLE_LABELS[u.role]}</span>
+                      <button onClick={() => setShowUserEdit(u)} style={{...S.btnOutline, padding:"6px 10px"}}><Edit3 size={12}/></button>
                       {isSuperAdmin && u.role !== "super_admin" && (
                         <button onClick={() => handleDeleteUser(u.id)} style={{...S.btnDanger, padding:"6px 10px"}}><Trash2 size={12}/></button>
                       )}
@@ -835,6 +938,14 @@ export default function Admin({ session, onBack }) {
           stores={stores}
           onClose={() => setShowUserAdd(false)}
           onSave={() => { setShowUserAdd(false); loadData(); }}
+        />
+      )}
+      {showUserEdit && (
+        <UserEditModal
+          user={showUserEdit}
+          stores={stores}
+          onClose={() => setShowUserEdit(null)}
+          onSave={() => { setShowUserEdit(null); loadData(); }}
         />
       )}
     </div>
