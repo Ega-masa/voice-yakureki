@@ -57,11 +57,16 @@ function LoginScreen({onLogin}){
       const company=await findCompanyByCode(code);
       if(!company)throw new Error("会社コードが見つかりません");
       if(mode==="signup"){
-        await signUp(email,pass);
-        const session=await getSession();
-        if(session?.user?.id)await ensureUser(session.user.id,email,company.id,{display_name:fullName.trim(),employee_id:employeeId.trim()});
-        await signOut();
-        setSuccess("登録申請が完了しました。管理者の承認後にログインできます。");
+        // signUpの返り値にuser.idが含まれる（メール確認前でも）
+        const signUpData=await signUp(email,pass);
+        const uid=signUpData?.user?.id;
+        if(uid){
+          // メール確認前でもusersテーブルに即登録 → 管理画面の申請一覧に表示される
+          await ensureUser(uid,email,company.id,{display_name:fullName.trim(),employee_id:employeeId.trim()});
+        }
+        // セッションがあればサインアウト（メール確認前は自動ログインさせない）
+        try{await signOut();}catch{}
+        setSuccess("登録申請が完了しました。メールの確認リンクを押した後、管理者の承認をお待ちください。");
         setMode("login");setPass("");
       }else{
         await signIn(email,pass);
@@ -287,6 +292,8 @@ export default function App(){
   if(page==="admin")return<Admin session={session} onBack={()=>{window.location.hash="";setPage("app");}}/>;
   if(showStorePicker)return<StorePicker companyId={userInfo?.company_id} currentStore={currentStore} onSelect={handleStoreSelect} onCancel={currentStore?()=>setShowStorePicker(false):null}/>;
   if(!userInfo)return<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><Loader2 size={28} style={{animation:"spin 1s linear infinite",color:"#0d9488"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
+  // ★ 未承認ユーザーはブロック画面を表示
+  if(userInfo.is_approved===false)return(<div style={{minHeight:"100vh",background:"linear-gradient(168deg,#f0fdfa 0%,#f0f9ff 40%,#fafbfc 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}><div style={{background:"#fff",borderRadius:20,padding:"32px 28px",width:"92%",maxWidth:380,boxShadow:"0 8px 32px rgba(0,0,0,.08)",textAlign:"center"}}><div style={{width:48,height:48,borderRadius:14,background:"#fef3c7",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:12,fontSize:22}}>⏳</div><div style={{fontSize:16,fontWeight:800,color:"#0f172a",marginBottom:8}}>承認待ち</div><div style={{fontSize:13,color:"#64748b",lineHeight:1.8,marginBottom:16}}>アカウントはまだ管理者に承認されていません。<br/>承認後にログインできます。</div><div style={{fontSize:11,color:"#94a3b8",marginBottom:16}}>{session.user.email}</div><button onClick={async()=>{await signOut();setUserInfo(null);setCurrentStore(null);}} style={{width:"100%",padding:"10px",background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer"}}>ログアウト</button></div></div>);
 
   // ======================================
   // メイン画面
