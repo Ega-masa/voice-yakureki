@@ -1,6 +1,6 @@
 // voice-yakureki v5.5.0 App.jsx — 全機能統合版 + テンプレート/チェック連携
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Mic, Square, Loader2, X, RotateCcw, Upload, FileAudio, List, ArrowLeft, Trash2, Clock, Check, Sparkles, ChevronDown, Activity, LogOut, User, Shield, Building2, Download, Search } from "lucide-react";
+import { Mic, Square, Loader2, X, RotateCcw, Upload, FileAudio, List, ArrowLeft, Trash2, Clock, Check, Sparkles, ChevronDown, LogOut, User, Shield, Building2, Download, Search } from "lucide-react";
 import { saveRecord, getRecords, updateRecord, deleteRecord, testConnection as testSupabase, SUPABASE_VERSION, signIn, signUp, signOut, getSession, onAuthChange, supabase, getUserInfo, getApiKey, logUsage, findCompanyByCode, searchStores, linkUserToStore, ensureUser, loadDrugMaster, correctDrugNames } from "./supabase";
 import Admin from "./Admin.jsx";
 
@@ -65,7 +65,8 @@ function LoginScreen({onLogin}){
           await ensureUser(uid,email,company.id,{display_name:fullName.trim(),employee_id:employeeId.trim()});
         }
         try{await signOut();}catch{}
-        setSuccess("登録申請が完了しました。メールの確認リンクを押した後、管理者の承認をお待ちください。");
+        setSuccess("登録申請が完了しました。管理者の承認をお待ちください。");
+        try{fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({event:"new_signup",company_id:company.id,data:{user_name:fullName.trim(),email}})}).catch(()=>{});}catch{}
         setMode("login");setPass("");
       }else{
         await signIn(email,pass);
@@ -118,6 +119,7 @@ function LoginScreen({onLogin}){
       const d=await r.json();
       if(!r.ok)throw new Error(d.error);
       setHelpResult("✅ 管理者にパスワードリセットを依頼しました。\n管理者が新しいパスワードを設定した後、再度ログインしてください。");
+      try{fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({event:"password_reset",data:{email:helpEmail.trim()}})}).catch(()=>{});}catch{}
     }catch(e){setHelpResult("❌ "+e.message);}
     setHelpLoading(false);
   };
@@ -230,58 +232,6 @@ function StorePicker({companyId,currentStore,onSelect,onCancel}){
 function Wave({active,level}){return(<div style={{display:"flex",alignItems:"center",gap:2,height:48,justifyContent:"center"}}>{Array.from({length:36}).map((_,i)=>{const h=active?8+(level||.3)*40+Math.sin(Date.now()/200+i)*8:4;return<div key={i} style={{width:2.5,borderRadius:2,background:active?`hsl(${165+i*2},60%,${40+Math.sin(i*.4)*12}%)`:"#d1d5db",height:`${Math.max(4,h)}px`,transition:active?"height 0.1s":"height 0.4s"}}/>;})}</div>);}
 function TemplatePicker({soapKey,onInsert,dbTemplates}){const[open,setOpen]=useState(false);const hardcoded=TEMPLATES[soapKey]||[];const dbItems=(dbTemplates||[]).map(t=>t[soapKey]).filter(Boolean);const all=[...dbItems,...hardcoded.filter(h=>!dbItems.includes(h))];if(all.length===0)return null;return(<div style={{position:"relative"}}><button onClick={()=>setOpen(!open)} style={{background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:6,padding:"2px 6px",fontSize:9,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:2}}><ChevronDown size={10}/>定型文</button>{open&&<div style={{position:"absolute",top:24,right:0,background:"#fff",border:"1px solid #e2e8f0",borderRadius:8,boxShadow:"0 4px 12px rgba(0,0,0,.1)",zIndex:20,minWidth:200,maxHeight:200,overflow:"auto",padding:4}}>{all.map((t,i)=><div key={i} onClick={()=>{onInsert(t);setOpen(false);}} style={{padding:"6px 10px",fontSize:11,color:"#334155",cursor:"pointer",borderRadius:4,whiteSpace:"pre-wrap",lineHeight:1.5}} onMouseEnter={e=>e.target.style.background="#f0fdfa"} onMouseLeave={e=>e.target.style.background="transparent"}>{t.length>60?t.slice(0,60)+"…":t}</div>)}</div>}</div>);}
 function ProcessLog({logs}){if(logs.length===0)return null;return(<div style={{background:"#f8fafc",borderRadius:10,padding:"10px 12px",marginBottom:12,border:"1px solid #e2e8f0"}}><div style={{fontSize:10,fontWeight:700,color:"#94a3b8",marginBottom:4}}>処理ログ</div>{logs.map((l,i)=><div key={i} style={{fontSize:11,padding:"2px 0",color:l.status==="error"?"#dc2626":l.status==="ok"?"#059669":"#475569"}}><span style={{color:"#94a3b8",marginRight:4}}>{l.time}</span>{l.status==="ok"?"✅":l.status==="error"?"❌":"⏳"} {l.msg}</div>)}</div>);}
-function DiagPanel({onClose,currentStore,apiKey}){
-  const[log,setLog]=useState([]);const[testing,setTesting]=useState(false);
-  const addLog=(l,s,d)=>setLog(p=>[...p,{time:ts(),label:l,status:s,detail:d}]);
-  const runTests=async()=>{
-    setTesting(true);setLog([]);
-    // 1. バージョン情報
-    addLog("Version","info",`App v${APP_VERSION} / Supabase v${SUPABASE_VERSION}`);
-    addLog("Store","info",currentStore?.name||"未選択");
-    // 2. Supabase接続
-    addLog("Supabase","testing","接続テスト中...");
-    try{const r=await testSupabase();addLog("Supabase",r.ok?"ok":"error",r.ok?r.message:r.error);}catch(e){addLog("Supabase","error",e.message);}
-    // 3. Groq APIキー
-    addLog("Groq Key","testing","DBからキー取得中...");
-    try{
-      const gk=await getApiKey("groq",currentStore?.id);
-      if(gk){addLog("Groq Key","ok",`取得OK (${gk.substring(0,12)}...)`);
-        // 実際にGroqに接続テスト（空のリクエストでエラー内容を確認）
-        addLog("Groq API","testing","エンドポイント疎通確認中...");
-        try{
-          const r=await fetch("https://api.groq.com/openai/v1/models",{headers:{Authorization:`Bearer ${gk}`}});
-          if(r.ok){const d=await r.json();const wm=d.data?.find(m=>m.id?.includes("whisper"));addLog("Groq API","ok",`接続OK${wm?" / Whisper利用可":""} (${d.data?.length||0}モデル)`);}
-          else{const t=await r.text();addLog("Groq API","error",`HTTP ${r.status}: ${t.substring(0,80)}`);}
-        }catch(e){addLog("Groq API","error",e.message);}
-      }else{addLog("Groq Key","error","未設定 → 管理画面のAPI設定から登録してください");}
-    }catch(e){addLog("Groq Key","error",e.message);}
-    // 4. SOAP API (Haiku 4.5)
-    addLog("SOAP API","testing","Vercel Function確認中...");
-    try{const r=await fetch("/api/soap");const d=await r.json();addLog("SOAP API",d.status==="ok"?"ok":"error",`v${d.version} / Anthropic Key: ${d.anthropic_key_set?"設定済み✅":"未設定❌"}`);}catch(e){addLog("SOAP API","error",e.message);}
-    // 5. DB統計
-    addLog("DB Stats","testing","レコード数確認中...");
-    try{
-      const{count:rc}=await supabase.from("records").select("*",{count:"exact",head:true});
-      const{count:uc}=await supabase.from("users").select("*",{count:"exact",head:true});
-      const{count:sc}=await supabase.from("stores").select("*",{count:"exact",head:true});
-      addLog("DB Stats","ok",`レコード${rc||0}件 / ユーザー${uc||0}人 / 店舗${sc||0}店`);
-    }catch(e){addLog("DB Stats","error",e.message);}
-    addLog("完了","ok","全テスト完了");
-    setTesting(false);
-  };
-  const sc=s=>s==="ok"?"#22c55e":s==="error"?"#ef4444":s==="info"?"#38bdf8":"#94a3b8";
-  const ic=s=>s==="ok"?"✅":s==="error"?"❌":s==="info"?"ℹ️":"⏳";
-  return(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:10}} onClick={onClose}><div style={{background:"#0f172a",borderRadius:16,padding:20,width:"100%",maxWidth:540,maxHeight:"85vh",overflow:"auto",color:"#e2e8f0"}} onClick={e=>e.stopPropagation()}>
-    <div style={{display:"flex",justifyContent:"space-between",marginBottom:14}}><div style={{display:"flex",alignItems:"center",gap:8}}><Activity size={16} color="#22d3ee"/><span style={{fontSize:15,fontWeight:800}}>診断パネル</span></div><button onClick={onClose} style={{background:"#1e293b",border:"none",borderRadius:8,width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}><X size={14} color="#94a3b8"/></button></div>
-    {/* サービス状況サマリー */}
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
-      <div style={{background:"#1e293b",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:10,color:"#64748b"}}>音声認識</div><div style={{fontSize:13,fontWeight:700,color:"#22d3ee"}}>Groq Whisper v3 Turbo</div><div style={{fontSize:10,color:"#475569"}}>$0.04/時間</div></div>
-      <div style={{background:"#1e293b",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:10,color:"#64748b"}}>SOAP分類</div><div style={{fontSize:13,fontWeight:700,color:"#a78bfa"}}>Claude Haiku 4.5</div><div style={{fontSize:10,color:"#475569"}}>$1/$5 per MTok</div></div>
-    </div>
-    <button onClick={runTests} disabled={testing} style={{width:"100%",padding:"10px",background:testing?"#334155":"linear-gradient(135deg,#0891b2,#0e7490)",color:"#fff",border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:testing?"wait":"pointer",marginBottom:12}}>{testing?"テスト中...":"🔍 全接続テスト"}</button>
-    {log.length>0&&<div style={{background:"#020617",borderRadius:10,padding:"10px 12px",maxHeight:320,overflow:"auto"}}>{log.map((l,i)=><div key={i} style={{padding:"4px 0",borderBottom:"1px solid #1e293b",fontSize:11,display:"flex",alignItems:"flex-start",gap:6}}><span style={{color:"#475569",minWidth:52,flexShrink:0}}>{l.time}</span><span style={{minWidth:14,flexShrink:0}}>{ic(l.status)}</span><span style={{color:sc(l.status),fontWeight:700,minWidth:72,flexShrink:0}}>{l.label}</span><span style={{color:"#94a3b8",wordBreak:"break-all",flex:1}}>{l.detail}</span></div>)}</div>}
-  </div></div>);
-}
 
 // ======================================
 // レコード詳細（SOAP編集）
@@ -412,7 +362,7 @@ function RecordDetail({record,onBack,onUpdate,onDelete,initialSoap,storeId,compa
 // ======================================
 export default function App(){
   const[session,setSession]=useState(undefined);const[page,setPage]=useState(()=>window.location.hash==="#admin"?"admin":"app");
-  const[view,setView]=useState("mic");const[state,setState]=useState(ST.IDLE);const[elapsed,setElapsed]=useState(0);const[showDiag,setShowDiag]=useState(false);
+  const[view,setView]=useState("mic");const[state,setState]=useState(ST.IDLE);const[elapsed,setElapsed]=useState(0);
   const[audioLevel,setAudioLevel]=useState(0);const[processingMsg,setProcessingMsg]=useState("");const[result,setResult]=useState("");const[error,setError]=useState("");
   const[records,setRecords]=useState([]);const[selectedRecord,setSelectedRecord]=useState(null);const[loadingRecords,setLoadingRecords]=useState(false);
   const[savedId,setSavedId]=useState(null);const[aiSoap,setAiSoap]=useState(null);const[procLog,setProcLog]=useState([]);const[patientName,setPatientName]=useState("");
@@ -508,7 +458,7 @@ export default function App(){
         <div style={{fontSize:14,fontWeight:800,color:"#0f172a"}}>音声薬歴</div>
         <div style={{flex:1}}/>
         {isAdmin&&<button onClick={()=>{window.location.hash="admin";setPage("admin");}} style={{background:"linear-gradient(135deg,#6366f1,#4f46e5)",border:"none",borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginLeft:4}} title="管理画面"><Shield size={14} color="#fff"/></button>}
-        {isAdmin&&<button onClick={()=>setShowDiag(true)} style={{background:"#0f172a",border:"none",borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginLeft:4}} title="診断"><Activity size={14} color="#22d3ee"/></button>}
+        {isAdmin&&<button onClick={()=>{window.location.hash="#admin";}} style={{background:"#0f172a",border:"none",borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginLeft:4}} title="管理画面"><Shield size={14} color="#64748b"/></button>}
         <button onClick={async()=>{await signOut();setUserInfo(null);setCurrentStore(null);}} style={{background:"#fef2f2",border:"none",borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginLeft:4}} title="ログアウト"><LogOut size={14} color="#ef4444"/></button>
       </div>
     </header>
@@ -583,6 +533,5 @@ export default function App(){
       {/* ===== レコード詳細 ===== */}
       {view==="detail"&&selectedRecord&&<RecordDetail record={selectedRecord} onBack={()=>{setView("list");setAiSoap(null);}} onUpdate={handleUpdateRecord} onDelete={handleDeleteRecord} initialSoap={aiSoap} storeId={currentStore?.id} companyId={userInfo?.company_id}/>}
     </main>
-    {showDiag&&<DiagPanel onClose={()=>setShowDiag(false)} currentStore={currentStore} apiKey={apiKey}/>}
   </div>);
 }
