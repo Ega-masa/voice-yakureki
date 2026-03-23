@@ -122,15 +122,20 @@ function StoreFormModal({ store, companies, onClose, onSave }) {
 }
 
 // === User Add Modal ===
-function UserAddModal({ stores, roles, onClose, onSave }) {
+function UserAddModal({ stores, roles, myRole, onClose, onSave }) {
   const [form, setForm] = useState({ email: "", password: "", store_id: "", role_id: "" });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
+  // 自分のロールより上位は選択不可
+  const ROLE_LEVEL = { "全体管理者":3, "店舗管理者":2, "薬剤師":1 };
+  const myLevel = myRole === "super_admin" ? 3 : myRole === "store_admin" ? 2 : 1;
+  const assignableRoles = roles.filter(r => r.is_active && (ROLE_LEVEL[r.name] || 1) <= myLevel);
+
   // デフォルトロール（薬剤師）を設定
   useEffect(() => {
-    if (roles.length > 0 && !form.role_id) {
-      const defaultRole = roles.find(r => r.name === "薬剤師") || roles[roles.length - 1];
+    if (assignableRoles.length > 0 && !form.role_id) {
+      const defaultRole = assignableRoles.find(r => r.name === "薬剤師") || assignableRoles[assignableRoles.length - 1];
       if (defaultRole) setForm(p => ({...p, role_id: defaultRole.id}));
     }
   }, [roles]);
@@ -190,7 +195,7 @@ function UserAddModal({ stores, roles, onClose, onSave }) {
           <label style={S.label}>ロール *</label>
           <select style={{...S.input, cursor:"pointer"}} value={form.role_id} onChange={e => setForm(p => ({...p, role_id: e.target.value}))}>
             <option value="">選択してください</option>
-            {roles.filter(r => r.is_active).map(r => (
+            {assignableRoles.map(r => (
               <option key={r.id} value={r.id}>{r.name}{r.description ? ` — ${r.description}` : ""}</option>
             ))}
           </select>
@@ -209,7 +214,7 @@ function UserAddModal({ stores, roles, onClose, onSave }) {
 }
 
 // === User Edit Modal ===
-function UserEditModal({ user, stores, roles, companies, onClose, onSave }) {
+function UserEditModal({ user, stores, roles, companies, myRole, onClose, onSave }) {
   const [form, setForm] = useState({
     display_name: user.display_name || "",
     employee_id: user.employee_id || "",
@@ -219,6 +224,16 @@ function UserEditModal({ user, stores, roles, companies, onClose, onSave }) {
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+
+  // ロール階層制限
+  const ROLE_LEVEL = { "全体管理者":3, "店舗管理者":2, "薬剤師":1 };
+  const myLevel = myRole === "super_admin" ? 3 : myRole === "store_admin" ? 2 : 1;
+  const assignableRoles = roles.filter(r => r.is_active && (ROLE_LEVEL[r.name] || 1) <= myLevel);
+
+  // 対象ユーザーのロールレベル
+  const targetRole = roles.find(r => r.id === user.role_id);
+  const targetLevel = targetRole ? (ROLE_LEVEL[targetRole.name] || 1) : (user.role === "super_admin" ? 3 : user.role === "store_admin" ? 2 : 1);
+  const canEditRole = myLevel >= targetLevel; // 自分と同格以下のユーザーのみロール変更可
 
   // role_idが空の場合、legacyロールからマッチングを試みる
   useEffect(() => {
@@ -277,10 +292,10 @@ function UserEditModal({ user, stores, roles, companies, onClose, onSave }) {
           <input style={S.input} value={form.employee_id} onChange={e => setForm(p => ({...p, employee_id: e.target.value}))} placeholder="社員番号" />
         </div>
         <div style={{ marginBottom:10 }}>
-          <label style={S.label}>ロール</label>
-          <select style={S.input} value={form.role_id} onChange={e => setForm(p => ({...p, role_id: e.target.value}))}>
+          <label style={S.label}>ロール{!canEditRole && <span style={{ fontWeight:400, color:"#d97706" }}>（上位ロールのため変更不可）</span>}</label>
+          <select style={{...S.input, opacity:canEditRole?1:0.5}} value={form.role_id} onChange={e => setForm(p => ({...p, role_id: e.target.value}))} disabled={!canEditRole}>
             <option value="">未設定</option>
-            {roles.filter(r => r.is_active).map(r => (
+            {assignableRoles.map(r => (
               <option key={r.id} value={r.id}>{r.name}{r.description ? ` — ${r.description}` : ""}</option>
             ))}
           </select>
@@ -1883,38 +1898,52 @@ export default function Admin({ session, onBack }) {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      // 自分のユーザー情報
       const { data: me } = await supabase.from("users").select("*").eq("email", session.user.email).single();
       setUserInfo(me);
 
-      // super_adminでなければ管理画面にアクセス不可
       if (me?.role !== "super_admin" && me?.role !== "store_admin") {
         setLoading(false);
         return;
       }
 
-      // 店舗一覧
-      const { data: storeData } = await supabase.from("stores").select("*").order("created_at");
+      const isSA = me.role === "super_admin";
+      const myCompanyId = me.company_id;
+
+      // 店舗一覧（store_adminは自社のみ）
+      let storeQ = supabase.from("stores").select("*").order("created_at");
+      if (!isSA && myCompanyId) storeQ = storeQ.eq("company_id", myCompanyId);
+      const { data: storeData } = await storeQ;
       setStores(storeData || []);
 
-      // ユーザー一覧（user_storesとjoin）
-      const { data: userData } = await supabase.from("users").select("*, user_stores(store_id, role, stores(name, company_id))").order("created_at");
+      // ユーザー一覧（store_adminは自社のみ）
+      let userQ = supabase.from("users").select("*, user_stores(store_id, role, stores(name, company_id))").order("created_at");
+      if (!isSA && myCompanyId) userQ = userQ.eq("company_id", myCompanyId);
+      const { data: userData } = await userQ;
       setUsersData(userData || []);
 
       // ロール一覧
       const { data: rolesData } = await supabase.from("roles").select("*").order("sort_order").order("created_at");
       setRolesList(rolesData || []);
 
-      // APIキー一覧
-      const { data: keyData } = await supabase.from("api_keys").select("*").order("created_at");
-      setApiKeys(keyData || []);
+      // APIキー一覧（super_admin のみ）
+      if (isSA) {
+        const { data: keyData } = await supabase.from("api_keys").select("*").order("created_at");
+        setApiKeys(keyData || []);
+      }
 
-      // 企業一覧
-      const { data: compData } = await supabase.from("companies").select("*").order("name");
-      setCompaniesList(compData || []);
+      // 企業一覧（super_adminは全社、store_adminは自社のみ）
+      if (isSA) {
+        const { data: compData } = await supabase.from("companies").select("*").order("name");
+        setCompaniesList(compData || []);
+      } else if (myCompanyId) {
+        const { data: compData } = await supabase.from("companies").select("*").eq("id", myCompanyId);
+        setCompaniesList(compData || []);
+      }
 
-      // 申請件数
-      const { count: pc } = await supabase.from("users").select("*", { count: "exact", head: true }).eq("is_approved", false);
+      // 申請件数（store_adminは自社のみ）
+      let pendQ = supabase.from("users").select("*", { count: "exact", head: true }).eq("is_approved", false);
+      if (!isSA && myCompanyId) pendQ = pendQ.eq("company_id", myCompanyId);
+      const { count: pc } = await pendQ;
       setPendingCount(pc || 0);
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -1946,6 +1975,7 @@ export default function Admin({ session, onBack }) {
   }
 
   const isSuperAdmin = userInfo.role === "super_admin";
+  const isStoreAdmin = userInfo.role === "store_admin";
 
   const handleDeleteStore = async (id) => {
     if (!confirm("この店舗を削除しますか？紐付いた履歴は残りますが、店舗情報は完全に削除されます。")) return;
@@ -1965,17 +1995,18 @@ export default function Admin({ session, onBack }) {
     loadData();
   };
 
-  const tabs = [
-    { id:"pending", label:"申請", icon:UserCheck },
-    { id:"company", label:"会社管理", icon:Building2 },
-    { id:"stores", label:"店舗管理", icon:Building2 },
-    { id:"users", label:"ユーザー", icon:Users },
-    { id:"apikeys", label:"API設定", icon:Key },
-    { id:"stats", label:"統計", icon:BarChart3 },
-    { id:"roles", label:"ロール", icon:Settings },
-    { id:"templates", label:"テンプレート", icon:FileText },
-    { id:"drugs", label:"医薬品", icon:Pill },
+  const allTabs = [
+    { id:"pending", label:"申請", icon:UserCheck, roles:["super_admin","store_admin"] },
+    { id:"company", label:"会社管理", icon:Building2, roles:["super_admin"] },
+    { id:"stores", label:"店舗管理", icon:Building2, roles:["super_admin","store_admin"] },
+    { id:"users", label:"ユーザー", icon:Users, roles:["super_admin","store_admin"] },
+    { id:"apikeys", label:"API設定", icon:Key, roles:["super_admin"] },
+    { id:"stats", label:"統計", icon:BarChart3, roles:["super_admin","store_admin"] },
+    { id:"roles", label:"ロール", icon:Settings, roles:["super_admin"] },
+    { id:"templates", label:"テンプレート", icon:FileText, roles:["super_admin"] },
+    { id:"drugs", label:"医薬品", icon:Pill, roles:["super_admin"] },
   ];
+  const tabs = allTabs.filter(t => t.roles.includes(userInfo.role));
 
   return (
     <div style={S.page}>
@@ -2131,6 +2162,11 @@ export default function Admin({ session, onBack }) {
                       const roleColor = userRole?.color || ROLE_COLORS[u.role]?.color || "#64748b";
                       const roleBg = userRole ? `${userRole.color}18` : ROLE_COLORS[u.role]?.bg || "#f1f5f9";
                       const storeNames = (u.user_stores || []).map(us => us.stores?.name).filter(Boolean);
+                      const ROLE_LEVEL = { "全体管理者":3, "店舗管理者":2, "薬剤師":1 };
+                      const myLevel = isSuperAdmin ? 3 : isStoreAdmin ? 2 : 1;
+                      const uLevel = userRole ? (ROLE_LEVEL[userRole.name] || 1) : (u.role === "super_admin" ? 3 : u.role === "store_admin" ? 2 : 1);
+                      const canEdit = myLevel >= uLevel;
+                      const canDelete = isSuperAdmin && u.role !== "super_admin";
                       return (
                         <div key={u.id} style={S.card}>
                           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
@@ -2145,8 +2181,8 @@ export default function Admin({ session, onBack }) {
                             </div>
                             {u.is_approved===false && <span style={S.badge("#d97706","#fffbeb")}>未承認</span>}
                             <span style={S.badge(roleColor, roleBg)}>{roleName}</span>
-                            <button onClick={() => setShowUserEdit(u)} style={{...S.btnOutline, padding:"6px 10px"}}><Edit3 size={12}/></button>
-                            {isSuperAdmin && u.role !== "super_admin" && (
+                            {canEdit && <button onClick={() => setShowUserEdit(u)} style={{...S.btnOutline, padding:"6px 10px"}}><Edit3 size={12}/></button>}
+                            {canDelete && (
                               <button onClick={() => handleDeleteUser(u.id)} style={{...S.btnDanger, padding:"6px 10px"}}><Trash2 size={12}/></button>
                             )}
                           </div>
@@ -2225,6 +2261,7 @@ export default function Admin({ session, onBack }) {
         <UserAddModal
           stores={stores}
           roles={rolesList}
+          myRole={userInfo.role}
           onClose={() => setShowUserAdd(false)}
           onSave={() => { setShowUserAdd(false); loadData(); }}
         />
@@ -2235,6 +2272,7 @@ export default function Admin({ session, onBack }) {
           stores={stores}
           roles={rolesList}
           companies={companiesList}
+          myRole={userInfo.role}
           onClose={() => setShowUserEdit(null)}
           onSave={() => { setShowUserEdit(null); loadData(); }}
         />
