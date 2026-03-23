@@ -46,6 +46,7 @@ function LoginScreen({onLogin}){
   const[fullName,setFullName]=useState("");const[employeeId,setEmployeeId]=useState("");
   const[loading,setLoading]=useState(false);const[err,setErr]=useState("");const[success,setSuccess]=useState("");
   const[showResend,setShowResend]=useState(false);const[resending,setResending]=useState(false);
+  const[helpMode,setHelpMode]=useState(null);const[helpEmail,setHelpEmail]=useState("");const[helpLoading,setHelpLoading]=useState(false);const[helpResult,setHelpResult]=useState("");
 
   const handle=async()=>{
     const code=cc.trim().toUpperCase();
@@ -99,6 +100,28 @@ function LoginScreen({onLogin}){
     setResending(false);
   };
 
+  const handleFindCode=async()=>{
+    setHelpLoading(true);setHelpResult("");
+    try{
+      const r=await fetch("/api/admin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"find_company_by_email",email:helpEmail.trim()})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error);
+      setHelpResult(`✅ 会社: ${d.company_name}\n会社コード: ${d.masked_code}\n※ 完全なコードは管理者にお問い合わせください`);
+    }catch(e){setHelpResult("❌ "+e.message);}
+    setHelpLoading(false);
+  };
+
+  const handleRequestReset=async()=>{
+    setHelpLoading(true);setHelpResult("");
+    try{
+      const r=await fetch("/api/admin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"request_password_reset",email:helpEmail.trim()})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error);
+      setHelpResult("✅ 管理者にパスワードリセットを依頼しました。\n管理者が新しいパスワードを設定した後、再度ログインしてください。");
+    }catch(e){setHelpResult("❌ "+e.message);}
+    setHelpLoading(false);
+  };
+
   const IS={width:"100%",padding:"10px 12px",border:"2px solid #e2e8f0",borderRadius:10,fontSize:13,outline:"none",boxSizing:"border-box",marginBottom:8};
 
   return(<div style={{minHeight:"100vh",background:"linear-gradient(168deg,#f0fdfa 0%,#f0f9ff 40%,#fafbfc 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}>
@@ -129,6 +152,35 @@ function LoginScreen({onLogin}){
       <button onClick={handle} disabled={loading||!email||!pass||!cc.trim()} style={{width:"100%",padding:"10px",background:loading?"#94a3b8":"linear-gradient(135deg,#0d9488,#0f766e)",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:loading?"wait":"pointer"}}>
         {loading?<Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>:mode==="login"?"ログイン":"登録申請"}
       </button>
+      {/* ヘルプリンク */}
+      {mode==="login"&&<div style={{display:"flex",justifyContent:"center",gap:16,marginTop:12}}>
+        <button onClick={()=>setHelpMode(helpMode==="code"?null:"code")} style={{background:"none",border:"none",fontSize:11,color:"#6366f1",cursor:"pointer",textDecoration:"underline"}}>会社コードを忘れた</button>
+        <button onClick={()=>setHelpMode(helpMode==="pass"?null:"pass")} style={{background:"none",border:"none",fontSize:11,color:"#6366f1",cursor:"pointer",textDecoration:"underline"}}>パスワードを忘れた</button>
+      </div>}
+      {/* 会社コード検索パネル */}
+      {helpMode==="code"&&<div style={{marginTop:10,padding:"12px 14px",background:"#f0f9ff",borderRadius:10,border:"1px solid #bfdbfe"}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#1e40af",marginBottom:8}}>会社コードを検索</div>
+        <div style={{fontSize:10,color:"#64748b",marginBottom:8}}>登録したメールアドレスから会社コードを検索できます</div>
+        <div style={{display:"flex",gap:6}}>
+          <input type="email" value={helpEmail} onChange={e=>setHelpEmail(e.target.value)} placeholder="メールアドレス" style={{flex:1,padding:"8px 10px",border:"1px solid #e2e8f0",borderRadius:8,fontSize:12,outline:"none"}}/>
+          <button onClick={handleFindCode} disabled={helpLoading||!helpEmail} style={{padding:"8px 14px",background:"#2563eb",color:"#fff",border:"none",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+            {helpLoading?<Loader2 size={12} style={{animation:"spin 1s linear infinite"}}/>:"検索"}
+          </button>
+        </div>
+        {helpResult&&<div style={{fontSize:11,marginTop:8,color:helpResult.startsWith("❌")?"#dc2626":"#059669",fontWeight:600,lineHeight:1.6}}>{helpResult}</div>}
+      </div>}
+      {/* パスワードリセット依頼パネル */}
+      {helpMode==="pass"&&<div style={{marginTop:10,padding:"12px 14px",background:"#fef3c7",borderRadius:10,border:"1px solid #fde68a"}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#92400e",marginBottom:8}}>パスワードリセット</div>
+        <div style={{fontSize:10,color:"#64748b",marginBottom:8}}>管理者にパスワードリセットを依頼できます</div>
+        <div style={{display:"flex",gap:6}}>
+          <input type="email" value={helpEmail} onChange={e=>setHelpEmail(e.target.value)} placeholder="メールアドレス" style={{flex:1,padding:"8px 10px",border:"1px solid #e2e8f0",borderRadius:8,fontSize:12,outline:"none"}}/>
+          <button onClick={handleRequestReset} disabled={helpLoading||!helpEmail} style={{padding:"8px 14px",background:"#d97706",color:"#fff",border:"none",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+            {helpLoading?<Loader2 size={12} style={{animation:"spin 1s linear infinite"}}/>:"依頼"}
+          </button>
+        </div>
+        {helpResult&&<div style={{fontSize:11,marginTop:8,color:helpResult.startsWith("❌")?"#dc2626":"#059669",fontWeight:600,lineHeight:1.6}}>{helpResult}</div>}
+      </div>}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   </div>);
