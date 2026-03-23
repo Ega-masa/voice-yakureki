@@ -152,3 +152,58 @@ export async function logUsage(action, storeId, userId, durationSec) {
     await supabase.from('usage_logs').insert({ action, store_id: storeId || null, user_id: userId || null, duration_sec: durationSec || null })
   } catch (e) {}
 }
+
+// === Drug Master ===
+let drugCache = null
+let drugCacheTime = 0
+const DRUG_CACHE_TTL = 30 * 60 * 1000 // 30分キャッシュ
+
+export async function loadDrugMaster() {
+  if (drugCache && Date.now() - drugCacheTime < DRUG_CACHE_TTL) return drugCache
+  const { data } = await supabase.from('drug_master').select('ingredient_name, reading_kana, reading_kata, aliases').eq('is_active', true)
+  drugCache = data || []
+  drugCacheTime = Date.now()
+  return drugCache
+}
+
+export function correctDrugNames(text, drugs) {
+  if (!text || !drugs?.length) return { text, corrections: [] }
+  
+  const corrections = []
+  let result = text
+
+  // ひらがな→カタカナ変換（照合用）
+  const toKata = (s) => s.replace(/[\u3041-\u3096]/g, c => String.fromCharCode(c.charCodeAt(0) + 0x60))
+  const toHira = (s) => s.replace(/[\u30A1-\u30F6]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60))
+
+  for (const drug of drugs) {
+    const name = drug.ingredient_name
+    // すでに正式名称が含まれていればスキップ
+    if (result.includes(name)) continue
+
+    // aliases + ひらがな読み + カタカナ読みで照合
+    const candidates = [
+      drug.reading_kana,
+      drug.reading_kata,
+      toKata(drug.reading_kana),
+      toHira(drug.reading_kata || ''),
+      ...(drug.aliases || [])
+    ].filter(Boolean)
+
+    for (const alias of candidates) {
+      if (!alias || alias === name) continue
+      // 大文字小文字・全角半角を考慮せず単純照合
+      if (result.includes(alias)) {
+        result = result.split(alias).join(name)
+        corrections.push({ from: alias, to: name })
+        break
+      }
+    }
+  }
+  return { text: result, corrections }
+}
+
+export function invalidateDrugCache() {
+  drugCache = null
+  drugCacheTime = 0
+}
