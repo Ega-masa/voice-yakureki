@@ -6,7 +6,7 @@ import {
   Building2, Users, Key, BarChart3, Plus, Trash2, Edit3, Save, X, 
   ArrowLeft, Shield, ShieldCheck, UserCheck, Loader2, RefreshCw,
   CheckCircle, XCircle, Copy, Eye, EyeOff, LogOut, ChevronDown, Check,
-  Settings
+  Settings, Search, ArrowUp, ArrowDown, FileText, AlertTriangle
 } from "lucide-react";
 
 // === Styles ===
@@ -122,42 +122,43 @@ function StoreFormModal({ store, companies, onClose, onSave }) {
 }
 
 // === User Add Modal ===
-function UserAddModal({ stores, onClose, onSave }) {
-  const [form, setForm] = useState({ email: "", password: "", store_id: "", role: "pharmacist" });
+function UserAddModal({ stores, roles, onClose, onSave }) {
+  const [form, setForm] = useState({ email: "", password: "", store_id: "", role_id: "" });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+
+  // デフォルトロール（薬剤師）を設定
+  useEffect(() => {
+    if (roles.length > 0 && !form.role_id) {
+      const defaultRole = roles.find(r => r.name === "薬剤師") || roles[roles.length - 1];
+      if (defaultRole) setForm(p => ({...p, role_id: defaultRole.id}));
+    }
+  }, [roles]);
 
   const handleSave = async () => {
     if (!form.email || !form.password) { setErr("メールアドレスとパスワードを入力してください"); return; }
     if (!form.store_id) { setErr("所属店舗を選択してください"); return; }
+    if (!form.role_id) { setErr("ロールを選択してください"); return; }
     setSaving(true); setErr("");
     try {
-      // 1. Supabase Authでユーザー作成
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: form.email,
-        password: form.password,
-      });
+      const selectedRole = roles.find(r => r.id === form.role_id);
+      const legacyRole = selectedRole?.name === "全体管理者" ? "super_admin" : selectedRole?.name === "店舗管理者" ? "store_admin" : "pharmacist";
+
+      const { data: authData, error: authError } = await supabase.auth.signUp({ email: form.email, password: form.password });
       if (authError) throw authError;
       const userId = authData.user?.id;
       if (!userId) throw new Error("ユーザーIDが取得できません");
 
-      // 2. usersテーブルに追加
       const { error: userError } = await supabase.from("users").insert({
-        id: userId,
-        email: form.email,
-        role: form.role === "store_admin" ? "store_admin" : "pharmacist",
-        display_name: form.email.split("@")[0],
+        id: userId, email: form.email, role: legacyRole, role_id: form.role_id,
+        display_name: form.email.split("@")[0], is_approved: true,
       });
       if (userError) throw userError;
 
-      // 3. user_storesに紐付け
       const { error: linkError } = await supabase.from("user_stores").insert({
-        user_id: userId,
-        store_id: form.store_id,
-        role: form.role,
+        user_id: userId, store_id: form.store_id, role: legacyRole,
       });
       if (linkError) throw linkError;
-
       onSave();
     } catch (e) { setErr(e.message); }
     setSaving(false);
@@ -186,10 +187,12 @@ function UserAddModal({ stores, onClose, onSave }) {
           </select>
         </div>
         <div style={{ marginBottom:16 }}>
-          <label style={S.label}>権限</label>
-          <select style={{...S.input, cursor:"pointer"}} value={form.role} onChange={e => setForm(p => ({...p, role: e.target.value}))}>
-            <option value="pharmacist">薬剤師</option>
-            <option value="store_admin">店舗管理者</option>
+          <label style={S.label}>ロール *</label>
+          <select style={{...S.input, cursor:"pointer"}} value={form.role_id} onChange={e => setForm(p => ({...p, role_id: e.target.value}))}>
+            <option value="">選択してください</option>
+            {roles.filter(r => r.is_active).map(r => (
+              <option key={r.id} value={r.id}>{r.name}{r.description ? ` — ${r.description}` : ""}</option>
+            ))}
           </select>
         </div>
         {err && <div style={{ fontSize:11, color:"#dc2626", marginBottom:8, padding:"6px 10px", background:"#fef2f2", borderRadius:8 }}>{err}</div>}
@@ -206,32 +209,44 @@ function UserAddModal({ stores, onClose, onSave }) {
 }
 
 // === User Edit Modal ===
-function UserEditModal({ user, stores, onClose, onSave }) {
+function UserEditModal({ user, stores, roles, onClose, onSave }) {
   const [form, setForm] = useState({
     display_name: user.display_name || "",
     employee_id: user.employee_id || "",
-    role: user.role || "pharmacist",
+    role_id: user.role_id || "",
     store_id: user.user_stores?.[0]?.store_id || "",
     is_approved: user.is_approved !== false,
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
+  // role_idが空の場合、legacyロールからマッチングを試みる
+  useEffect(() => {
+    if (!form.role_id && user.role && roles.length > 0) {
+      const legacyMap = { super_admin: "全体管理者", store_admin: "店舗管理者", pharmacist: "薬剤師" };
+      const matched = roles.find(r => r.name === legacyMap[user.role]);
+      if (matched) setForm(p => ({...p, role_id: matched.id}));
+    }
+  }, [roles, user.role]);
+
   const handleSave = async () => {
     setSaving(true); setErr("");
     try {
+      const selectedRole = roles.find(r => r.id === form.role_id);
+      const legacyRole = selectedRole?.name === "全体管理者" ? "super_admin" : selectedRole?.name === "店舗管理者" ? "store_admin" : "pharmacist";
+
       const { error } = await supabase.from("users").update({
         display_name: form.display_name,
         employee_id: form.employee_id,
-        role: form.role,
+        role: legacyRole,
+        role_id: form.role_id || null,
         is_approved: form.is_approved,
       }).eq("id", user.id);
       if (error) throw error;
 
-      // 店舗紐付け変更
       if (form.store_id) {
         await supabase.from("user_stores").delete().eq("user_id", user.id);
-        await supabase.from("user_stores").insert({ user_id: user.id, store_id: form.store_id, role: form.role === "store_admin" ? "store_admin" : "pharmacist" });
+        await supabase.from("user_stores").insert({ user_id: user.id, store_id: form.store_id, role: legacyRole });
       }
       onSave();
     } catch (e) { setErr(e.message); }
@@ -256,10 +271,11 @@ function UserEditModal({ user, stores, onClose, onSave }) {
         </div>
         <div style={{ marginBottom:10 }}>
           <label style={S.label}>ロール</label>
-          <select style={S.input} value={form.role} onChange={e => setForm(p => ({...p, role: e.target.value}))}>
-            <option value="pharmacist">薬剤師</option>
-            <option value="store_admin">店舗管理者</option>
-            <option value="super_admin">全体管理者</option>
+          <select style={S.input} value={form.role_id} onChange={e => setForm(p => ({...p, role_id: e.target.value}))}>
+            <option value="">未設定</option>
+            {roles.filter(r => r.is_active).map(r => (
+              <option key={r.id} value={r.id}>{r.name}{r.description ? ` — ${r.description}` : ""}</option>
+            ))}
           </select>
         </div>
         <div style={{ marginBottom:10 }}>
@@ -887,6 +903,18 @@ function RolePanel({ onRefresh }) {
     load();
   };
 
+  const handleMoveRole = async (index, direction) => {
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= roles.length) return;
+    const a = roles[index];
+    const b = roles[newIndex];
+    await Promise.all([
+      supabase.from("roles").update({ sort_order: b.sort_order ?? newIndex }).eq("id", a.id),
+      supabase.from("roles").update({ sort_order: a.sort_order ?? index }).eq("id", b.id),
+    ]);
+    load();
+  };
+
   // 権限をカテゴリでグループ化
   const permsByCategory = {};
   permissions.forEach(p => {
@@ -906,11 +934,20 @@ function RolePanel({ onRefresh }) {
       </div>
 
       {/* ロール一覧 */}
-      {roles.map(role => {
+      {roles.map((role, roleIdx) => {
         const perms = (rolePerms[role.id] || []).map(pid => permissions.find(p => p.id === pid)).filter(Boolean);
         return (
           <div key={role.id} style={{...S.card, opacity: role.is_active ? 1 : 0.5 }}>
             <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:perms.length > 0 ? 10 : 0 }}>
+              {/* 並び替えボタン */}
+              <div style={{ display:"flex", flexDirection:"column", gap:1, flexShrink:0 }}>
+                <button onClick={() => handleMoveRole(roleIdx, -1)} disabled={roleIdx === 0} style={{ background:"none", border:"none", cursor:roleIdx === 0 ? "default" : "pointer", padding:0, opacity:roleIdx === 0 ? 0.2 : 0.6 }}>
+                  <ArrowUp size={11} color="#64748b"/>
+                </button>
+                <button onClick={() => handleMoveRole(roleIdx, 1)} disabled={roleIdx === roles.length - 1} style={{ background:"none", border:"none", cursor:roleIdx === roles.length - 1 ? "default" : "pointer", padding:0, opacity:roleIdx === roles.length - 1 ? 0.2 : 0.6 }}>
+                  <ArrowDown size={11} color="#64748b"/>
+                </button>
+              </div>
               <div style={{ width:8, height:8, borderRadius:4, background:role.color || "#6366f1", flexShrink:0 }}/>
               <div style={{ flex:1 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
@@ -965,7 +1002,7 @@ function RolePanel({ onRefresh }) {
 
             <div style={{ marginBottom:12 }}>
               <label style={S.label}>ロール名 *</label>
-              <input value={form.name} onChange={e => setForm({...form, name: e.target.value})} style={S.input} placeholder="例: エリアマネージャー" disabled={editing !== "new" && editing?.is_system}/>
+              <input value={form.name} onChange={e => setForm({...form, name: e.target.value})} style={S.input} placeholder="例: エリアマネージャー"/>
             </div>
             <div style={{ marginBottom:12 }}>
               <label style={S.label}>説明</label>
@@ -1029,6 +1066,358 @@ function RolePanel({ onRefresh }) {
               <button onClick={handleSave} disabled={saving} style={S.btn()}>
                 {saving ? <Loader2 size={14} style={{ animation:"spin 1s linear infinite" }}/> : <Save size={14}/>}
                 {editing === "new" ? "作成" : "保存"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// === SOAP Template Management (Phase C) ===
+const TEMPLATE_CATEGORIES = {
+  general:  { label: "一般", color: "#64748b" },
+  initial:  { label: "初回", color: "#2563eb" },
+  followup: { label: "継続", color: "#059669" },
+  highrisk: { label: "ハイリスク", color: "#dc2626" },
+  custom:   { label: "カスタム", color: "#7c3aed" },
+};
+const SOAP_FIELDS = [
+  { key:"soap_s", label:"S（主観的情報）", color:"#059669" },
+  { key:"soap_o", label:"O（客観的情報）", color:"#2563eb" },
+  { key:"soap_a", label:"A（評価）", color:"#d97706" },
+  { key:"soap_ep", label:"EP（教育計画）", color:"#7c3aed" },
+  { key:"soap_cp", label:"CP（ケアプラン）", color:"#db2777" },
+  { key:"soap_op", label:"OP（観察計画）", color:"#0891b2" },
+  { key:"soap_p", label:"P（計画）", color:"#ea580c" },
+  { key:"soap_q", label:"問い合わせ", color:"#475569" },
+  { key:"soap_other", label:"その他", color:"#6b7280" },
+  { key:"soap_highrisk", label:"ハイリスク", color:"#dc2626" },
+];
+
+function SoapTemplatePanel({ companies, stores }) {
+  const [templates, setTemplates] = useState([]);
+  const [checkRules, setCheckRules] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null); // null | "new" | template object
+  const [editingRule, setEditingRule] = useState(null);
+  const [form, setForm] = useState({});
+  const [ruleForm, setRuleForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [subTab, setSubTab] = useState("templates"); // templates | rules
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [{ data: tData }, { data: rData }] = await Promise.all([
+      supabase.from("soap_templates").select("*").order("sort_order").order("created_at"),
+      supabase.from("soap_check_rules").select("*").order("sort_order"),
+    ]);
+    setTemplates(tData || []);
+    setCheckRules(rData || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openTemplateEdit = (tpl) => {
+    if (tpl === "new") {
+      const emptyForm = { name:"", description:"", category:"general", company_id:"", store_id:"" };
+      SOAP_FIELDS.forEach(f => emptyForm[f.key] = "");
+      setForm(emptyForm);
+    } else {
+      const f = { name:tpl.name, description:tpl.description||"", category:tpl.category||"general", company_id:tpl.company_id||"", store_id:tpl.store_id||"" };
+      SOAP_FIELDS.forEach(sf => f[sf.key] = tpl[sf.key] || "");
+      setForm(f);
+    }
+    setEditing(tpl);
+    setErr("");
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!form.name.trim()) { setErr("テンプレート名を入力してください"); return; }
+    setSaving(true); setErr("");
+    try {
+      const row = {
+        name: form.name.trim(), description: form.description.trim(), category: form.category,
+        company_id: form.company_id || null, store_id: form.store_id || null,
+        updated_at: new Date().toISOString(),
+      };
+      SOAP_FIELDS.forEach(f => row[f.key] = form[f.key] || "");
+      if (editing === "new") {
+        const maxOrder = Math.max(...templates.map(t => t.sort_order || 0), 0);
+        row.sort_order = maxOrder + 1;
+        const { error } = await supabase.from("soap_templates").insert(row);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("soap_templates").update(row).eq("id", editing.id);
+        if (error) throw error;
+      }
+      setEditing(null);
+      load();
+    } catch (e) { setErr(e.message); }
+    setSaving(false);
+  };
+
+  const handleDeleteTemplate = async (id) => {
+    if (!confirm("このテンプレートを削除しますか？")) return;
+    await supabase.from("soap_templates").delete().eq("id", id);
+    load();
+  };
+
+  // チェックルール編集
+  const openRuleEdit = (rule) => {
+    if (rule === "new") {
+      setRuleForm({ name:"", description:"", required_fields:["soap_s","soap_p"], min_length:5, applies_to:"general", company_id:"" });
+    } else {
+      setRuleForm({ name:rule.name, description:rule.description||"", required_fields:rule.required_fields||[], min_length:rule.min_length||0, applies_to:rule.applies_to||"general", company_id:rule.company_id||"" });
+    }
+    setEditingRule(rule);
+    setErr("");
+  };
+
+  const handleSaveRule = async () => {
+    if (!ruleForm.name.trim()) { setErr("ルール名を入力してください"); return; }
+    setSaving(true); setErr("");
+    try {
+      const row = {
+        name: ruleForm.name.trim(), description: ruleForm.description.trim(),
+        required_fields: ruleForm.required_fields, min_length: ruleForm.min_length,
+        applies_to: ruleForm.applies_to, company_id: ruleForm.company_id || null,
+        updated_at: new Date().toISOString(),
+      };
+      if (editingRule === "new") {
+        row.sort_order = checkRules.length + 1;
+        const { error } = await supabase.from("soap_check_rules").insert(row);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("soap_check_rules").update(row).eq("id", editingRule.id);
+        if (error) throw error;
+      }
+      setEditingRule(null);
+      load();
+    } catch (e) { setErr(e.message); }
+    setSaving(false);
+  };
+
+  const handleDeleteRule = async (id) => {
+    if (!confirm("このルールを削除しますか？")) return;
+    await supabase.from("soap_check_rules").delete().eq("id", id);
+    load();
+  };
+
+  const toggleRuleField = (field) => {
+    setRuleForm(prev => ({
+      ...prev,
+      required_fields: prev.required_fields.includes(field)
+        ? prev.required_fields.filter(f => f !== field)
+        : [...prev.required_fields, field]
+    }));
+  };
+
+  if (loading) return <div style={{ textAlign:"center", padding:30 }}><Loader2 size={24} style={{ animation:"spin 1s linear infinite", color:"#94a3b8" }}/></div>;
+
+  return (
+    <div>
+      {/* サブタブ */}
+      <div style={{ display:"flex", gap:4, background:"#f1f5f9", borderRadius:10, padding:3, marginBottom:16 }}>
+        <button onClick={() => setSubTab("templates")} style={{ flex:1, padding:"7px 12px", borderRadius:8, border:"none", background:subTab==="templates"?"#6366f1":"transparent", color:subTab==="templates"?"#fff":"#94a3b8", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+          テンプレート ({templates.length})
+        </button>
+        <button onClick={() => setSubTab("rules")} style={{ flex:1, padding:"7px 12px", borderRadius:8, border:"none", background:subTab==="rules"?"#6366f1":"transparent", color:subTab==="rules"?"#fff":"#94a3b8", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+          記載チェックルール ({checkRules.length})
+        </button>
+      </div>
+
+      {/* ========== テンプレート一覧 ========== */}
+      {subTab === "templates" && (
+        <div>
+          <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:12 }}>
+            <button onClick={() => openTemplateEdit("new")} style={S.btn()}>
+              <Plus size={14}/> 新規テンプレート
+            </button>
+          </div>
+          {templates.length === 0 ? <div style={S.empty}>テンプレートがありません</div> : (
+            templates.map(tpl => {
+              const cat = TEMPLATE_CATEGORIES[tpl.category] || TEMPLATE_CATEGORIES.general;
+              const filledFields = SOAP_FIELDS.filter(f => tpl[f.key]?.trim()).length;
+              return (
+                <div key={tpl.id} style={{...S.card, opacity: tpl.is_active ? 1 : 0.5 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <FileText size={18} color={cat.color}/>
+                    <div style={{ flex:1 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <span style={{ fontSize:13, fontWeight:800, color:"#0f172a" }}>{tpl.name}</span>
+                        <span style={S.badge(cat.color, `${cat.color}18`)}>{cat.label}</span>
+                      </div>
+                      <div style={{ fontSize:10, color:"#94a3b8", marginTop:2 }}>
+                        {filledFields}項目入力済
+                        {tpl.description && <span> · {tpl.description}</span>}
+                      </div>
+                    </div>
+                    <button onClick={() => openTemplateEdit(tpl)} style={{...S.btnOutline, padding:"6px 10px"}}><Edit3 size={12}/></button>
+                    <button onClick={() => handleDeleteTemplate(tpl.id)} style={{...S.btnDanger, padding:"6px 10px"}}><Trash2 size={12}/></button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {/* ========== チェックルール一覧 ========== */}
+      {subTab === "rules" && (
+        <div>
+          <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:12 }}>
+            <button onClick={() => openRuleEdit("new")} style={S.btn()}>
+              <Plus size={14}/> 新規ルール
+            </button>
+          </div>
+          {checkRules.length === 0 ? <div style={S.empty}>チェックルールがありません</div> : (
+            checkRules.map(rule => {
+              const cat = TEMPLATE_CATEGORIES[rule.applies_to] || TEMPLATE_CATEGORIES.general;
+              return (
+                <div key={rule.id} style={{...S.card, opacity: rule.is_active ? 1 : 0.5 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <AlertTriangle size={18} color={cat.color}/>
+                    <div style={{ flex:1 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <span style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>{rule.name}</span>
+                        <span style={S.badge(cat.color, `${cat.color}18`)}>{cat.label}</span>
+                      </div>
+                      <div style={{ fontSize:10, color:"#94a3b8", marginTop:2 }}>
+                        必須: {(rule.required_fields||[]).map(f => SOAP_FIELDS.find(sf => sf.key === f)?.label?.split("（")[0] || f).join(", ")}
+                        {rule.min_length > 0 && <span> · 最低{rule.min_length}文字</span>}
+                      </div>
+                    </div>
+                    <button onClick={() => openRuleEdit(rule)} style={{...S.btnOutline, padding:"6px 10px"}}><Edit3 size={12}/></button>
+                    <button onClick={() => handleDeleteRule(rule.id)} style={{...S.btnDanger, padding:"6px 10px"}}><Trash2 size={12}/></button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {/* ========== テンプレート編集モーダル ========== */}
+      {editing !== null && (
+        <div style={S.modal} onClick={() => setEditing(null)}>
+          <div style={{...S.modalBox, maxWidth:600 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+              <div style={{ fontSize:16, fontWeight:800, color:"#0f172a" }}>
+                {editing === "new" ? "新規テンプレート" : "テンプレートを編集"}
+              </div>
+              <button onClick={() => setEditing(null)} style={{ background:"none", border:"none", cursor:"pointer" }}><X size={20} color="#94a3b8"/></button>
+            </div>
+            {err && <div style={{ background:"#fef2f2", color:"#dc2626", padding:"8px 12px", borderRadius:8, fontSize:12, marginBottom:12 }}>{err}</div>}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
+              <div>
+                <label style={S.label}>テンプレート名 *</label>
+                <input value={form.name} onChange={e => setForm({...form, name:e.target.value})} style={S.input} placeholder="例: 初回面談用"/>
+              </div>
+              <div>
+                <label style={S.label}>カテゴリ</label>
+                <select value={form.category} onChange={e => setForm({...form, category:e.target.value})} style={S.input}>
+                  {Object.entries(TEMPLATE_CATEGORIES).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{ marginBottom:12 }}>
+              <label style={S.label}>説明</label>
+              <input value={form.description} onChange={e => setForm({...form, description:e.target.value})} style={S.input} placeholder="このテンプレートの用途"/>
+            </div>
+            {(companies||[]).length > 0 && (
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+                <div>
+                  <label style={S.label}>対象会社（空=全社共通）</label>
+                  <select value={form.company_id} onChange={e => setForm({...form, company_id:e.target.value, store_id:""})} style={S.input}>
+                    <option value="">全社共通</option>
+                    {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={S.label}>対象店舗（空=全店舗共通）</label>
+                  <select value={form.store_id} onChange={e => setForm({...form, store_id:e.target.value})} style={S.input}>
+                    <option value="">全店舗共通</option>
+                    {(stores||[]).filter(s => !form.company_id || s.company_id === form.company_id).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+            <div style={{ fontSize:13, fontWeight:800, color:"#0f172a", marginBottom:8 }}>SOAP定型文</div>
+            <div style={{ maxHeight:320, overflowY:"auto", paddingRight:4 }}>
+              {SOAP_FIELDS.map(f => (
+                <div key={f.key} style={{ marginBottom:10 }}>
+                  <label style={{ fontSize:11, fontWeight:700, color:f.color, display:"block", marginBottom:3 }}>{f.label}</label>
+                  <textarea value={form[f.key]||""} onChange={e => setForm({...form, [f.key]:e.target.value})} style={{...S.input, minHeight:48, resize:"vertical", fontSize:12, lineHeight:1.5 }} placeholder={`${f.label}のテンプレートテキスト`}/>
+                </div>
+              ))}
+            </div>
+            <div style={{ display:"flex", gap:8, marginTop:16, justifyContent:"flex-end" }}>
+              <button onClick={() => setEditing(null)} style={S.btnOutline}>キャンセル</button>
+              <button onClick={handleSaveTemplate} disabled={saving} style={S.btn()}>
+                {saving ? <Loader2 size={14} style={{ animation:"spin 1s linear infinite" }}/> : <Save size={14}/>}
+                {editing === "new" ? "作成" : "保存"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========== チェックルール編集モーダル ========== */}
+      {editingRule !== null && (
+        <div style={S.modal} onClick={() => setEditingRule(null)}>
+          <div style={{...S.modalBox, maxWidth:520 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+              <div style={{ fontSize:16, fontWeight:800, color:"#0f172a" }}>
+                {editingRule === "new" ? "新規チェックルール" : "ルールを編集"}
+              </div>
+              <button onClick={() => setEditingRule(null)} style={{ background:"none", border:"none", cursor:"pointer" }}><X size={20} color="#94a3b8"/></button>
+            </div>
+            {err && <div style={{ background:"#fef2f2", color:"#dc2626", padding:"8px 12px", borderRadius:8, fontSize:12, marginBottom:12 }}>{err}</div>}
+            <div style={{ marginBottom:10 }}>
+              <label style={S.label}>ルール名 *</label>
+              <input value={ruleForm.name} onChange={e => setRuleForm({...ruleForm, name:e.target.value})} style={S.input} placeholder="例: ハイリスク薬チェック"/>
+            </div>
+            <div style={{ marginBottom:10 }}>
+              <label style={S.label}>説明</label>
+              <input value={ruleForm.description} onChange={e => setRuleForm({...ruleForm, description:e.target.value})} style={S.input}/>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
+              <div>
+                <label style={S.label}>適用カテゴリ</label>
+                <select value={ruleForm.applies_to} onChange={e => setRuleForm({...ruleForm, applies_to:e.target.value})} style={S.input}>
+                  {Object.entries(TEMPLATE_CATEGORIES).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={S.label}>最低文字数</label>
+                <input type="number" value={ruleForm.min_length} onChange={e => setRuleForm({...ruleForm, min_length:parseInt(e.target.value)||0})} style={S.input} min="0"/>
+              </div>
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <label style={{ ...S.label, marginBottom:8 }}>必須項目</label>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4 }}>
+                {SOAP_FIELDS.map(f => {
+                  const checked = ruleForm.required_fields.includes(f.key);
+                  return (
+                    <label key={f.key} style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer", padding:"5px 8px", borderRadius:6, background: checked ? `${f.color}10` : "transparent" }} onClick={() => toggleRuleField(f.key)}>
+                      <div style={{ width:15, height:15, borderRadius:4, border:`2px solid ${checked ? f.color : "#cbd5e1"}`, background:checked ? f.color : "#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                        {checked && <Check size={9} color="#fff"/>}
+                      </div>
+                      <span style={{ fontSize:11, fontWeight:600, color:f.color }}>{f.label.split("（")[0]}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+              <button onClick={() => setEditingRule(null)} style={S.btnOutline}>キャンセル</button>
+              <button onClick={handleSaveRule} disabled={saving} style={S.btn()}>
+                {saving ? <Loader2 size={14} style={{ animation:"spin 1s linear infinite" }}/> : <Save size={14}/>}
+                {editingRule === "new" ? "作成" : "保存"}
               </button>
             </div>
           </div>
@@ -1241,11 +1630,17 @@ export default function Admin({ session, onBack }) {
   const [apiKeys, setApiKeys] = useState([]);
   const [userInfo, setUserInfo] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [showStoreForm, setShowStoreForm] = useState(null); // null=closed, false=new, object=edit
+  const [showStoreForm, setShowStoreForm] = useState(null);
   const [showUserAdd, setShowUserAdd] = useState(false);
-  const [showUserEdit, setShowUserEdit] = useState(null); // null=closed, object=edit
+  const [showUserEdit, setShowUserEdit] = useState(null);
   const [companiesList, setCompaniesList] = useState([]);
   const [storeFilterCompany, setStoreFilterCompany] = useState("all");
+  const [rolesList, setRolesList] = useState([]);
+  // ユーザー検索・フィルタ
+  const [userSearch, setUserSearch] = useState("");
+  const [userFilterCompany, setUserFilterCompany] = useState("all");
+  const [userFilterStore, setUserFilterStore] = useState("all");
+  const [userFilterRole, setUserFilterRole] = useState("all");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -1265,8 +1660,12 @@ export default function Admin({ session, onBack }) {
       setStores(storeData || []);
 
       // ユーザー一覧（user_storesとjoin）
-      const { data: userData } = await supabase.from("users").select("*, user_stores(store_id, role, stores(name))").order("created_at");
+      const { data: userData } = await supabase.from("users").select("*, user_stores(store_id, role, stores(name, company_id))").order("created_at");
       setUsersData(userData || []);
+
+      // ロール一覧
+      const { data: rolesData } = await supabase.from("roles").select("*").order("sort_order").order("created_at");
+      setRolesList(rolesData || []);
 
       // APIキー一覧
       const { data: keyData } = await supabase.from("api_keys").select("*").order("created_at");
@@ -1336,6 +1735,7 @@ export default function Admin({ session, onBack }) {
     { id:"apikeys", label:"API設定", icon:Key },
     { id:"stats", label:"統計", icon:BarChart3 },
     { id:"roles", label:"ロール", icon:Settings },
+    { id:"templates", label:"テンプレート", icon:FileText },
   ];
 
   return (
@@ -1435,36 +1835,89 @@ export default function Admin({ session, onBack }) {
                 <Plus size={14}/> ユーザー追加
               </button>
             </div>
-            {usersData.length === 0 ? (
-              <div style={S.empty}>ユーザーがいません</div>
-            ) : (
-              usersData.map(u => {
-                const Icon = ROLE_ICONS[u.role] || UserCheck;
-                const rc = ROLE_COLORS[u.role] || ROLE_COLORS.pharmacist;
-                const storeNames = (u.user_stores || []).map(us => us.stores?.name).filter(Boolean);
-                return (
-                  <div key={u.id} style={S.card}>
-                    <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                      <Icon size={20} color={rc.color}/>
-                      <div style={{ flex:1 }}>
-                        <div style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>{u.display_name || u.email}</div>
-                        <div style={{ fontSize:11, color:"#94a3b8" }}>
-                          {u.email}
-                          {u.employee_id && <span> / {u.employee_id}</span>}
-                          {storeNames.length > 0 && <span> — {storeNames.join(", ")}</span>}
+            {/* 検索・フィルタ */}
+            <div style={{ marginBottom:14 }}>
+              <div style={{ position:"relative", marginBottom:8 }}>
+                <Search size={14} color="#94a3b8" style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)" }}/>
+                <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="名前・メールで検索..." style={{...S.input, paddingLeft:32, fontSize:12 }}/>
+              </div>
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                {companiesList.length > 0 && (
+                  <select value={userFilterCompany} onChange={e => { setUserFilterCompany(e.target.value); setUserFilterStore("all"); }} style={{ padding:"5px 8px", borderRadius:8, border:"1px solid #e2e8f0", fontSize:11, fontWeight:600, color:"#475569", cursor:"pointer", outline:"none" }}>
+                    <option value="all">全会社</option>
+                    {companiesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                )}
+                <select value={userFilterStore} onChange={e => setUserFilterStore(e.target.value)} style={{ padding:"5px 8px", borderRadius:8, border:"1px solid #e2e8f0", fontSize:11, fontWeight:600, color:"#475569", cursor:"pointer", outline:"none" }}>
+                  <option value="all">全店舗</option>
+                  {(userFilterCompany === "all" ? stores : stores.filter(st => st.company_id === userFilterCompany)).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                {rolesList.length > 0 && (
+                  <select value={userFilterRole} onChange={e => setUserFilterRole(e.target.value)} style={{ padding:"5px 8px", borderRadius:8, border:"1px solid #e2e8f0", fontSize:11, fontWeight:600, color:"#475569", cursor:"pointer", outline:"none" }}>
+                    <option value="all">全ロール</option>
+                    {rolesList.filter(r => r.is_active).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  </select>
+                )}
+              </div>
+            </div>
+            {(() => {
+              const q = userSearch.trim().toLowerCase();
+              const filtered = usersData.filter(u => {
+                if (q && !(u.display_name||"").toLowerCase().includes(q) && !(u.email||"").toLowerCase().includes(q) && !(u.employee_id||"").toLowerCase().includes(q)) return false;
+                if (userFilterCompany !== "all" && u.company_id !== userFilterCompany) return false;
+                if (userFilterStore !== "all") {
+                  const userStoreIds = (u.user_stores || []).map(us => us.store_id);
+                  if (!userStoreIds.includes(userFilterStore)) return false;
+                }
+                if (userFilterRole !== "all") {
+                  if (u.role_id !== userFilterRole) {
+                    const matchedRole = rolesList.find(r => r.id === userFilterRole);
+                    const legacyMap = { "全体管理者":"super_admin", "店舗管理者":"store_admin", "薬剤師":"pharmacist" };
+                    if (!matchedRole || u.role !== legacyMap[matchedRole.name]) return false;
+                  }
+                }
+                return true;
+              });
+              return (
+                <>
+                  {q || userFilterCompany !== "all" || userFilterStore !== "all" || userFilterRole !== "all" ? (
+                    <div style={{ fontSize:11, color:"#94a3b8", marginBottom:8 }}>{filtered.length}件 / {usersData.length}件</div>
+                  ) : null}
+                  {filtered.length === 0 ? (
+                    <div style={S.empty}>{usersData.length === 0 ? "ユーザーがいません" : "条件に一致するユーザーがいません"}</div>
+                  ) : (
+                    filtered.map(u => {
+                      const userRole = rolesList.find(r => r.id === u.role_id);
+                      const roleName = userRole?.name || ROLE_LABELS[u.role] || u.role;
+                      const roleColor = userRole?.color || ROLE_COLORS[u.role]?.color || "#64748b";
+                      const roleBg = userRole ? `${userRole.color}18` : ROLE_COLORS[u.role]?.bg || "#f1f5f9";
+                      const storeNames = (u.user_stores || []).map(us => us.stores?.name).filter(Boolean);
+                      return (
+                        <div key={u.id} style={S.card}>
+                          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                            <div style={{ width:8, height:8, borderRadius:4, background:roleColor, flexShrink:0 }}/>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <div style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>{u.display_name || u.email}</div>
+                              <div style={{ fontSize:11, color:"#94a3b8", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                                {u.email}
+                                {u.employee_id && <span> / {u.employee_id}</span>}
+                                {storeNames.length > 0 && <span> — {storeNames.join(", ")}</span>}
+                              </div>
+                            </div>
+                            {u.is_approved===false && <span style={S.badge("#d97706","#fffbeb")}>未承認</span>}
+                            <span style={S.badge(roleColor, roleBg)}>{roleName}</span>
+                            <button onClick={() => setShowUserEdit(u)} style={{...S.btnOutline, padding:"6px 10px"}}><Edit3 size={12}/></button>
+                            {isSuperAdmin && u.role !== "super_admin" && (
+                              <button onClick={() => handleDeleteUser(u.id)} style={{...S.btnDanger, padding:"6px 10px"}}><Trash2 size={12}/></button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      {u.is_approved===false && <span style={S.badge("#d97706","#fffbeb")}>未承認</span>}
-                      <span style={S.badge(rc.color, rc.bg)}>{ROLE_LABELS[u.role]}</span>
-                      <button onClick={() => setShowUserEdit(u)} style={{...S.btnOutline, padding:"6px 10px"}}><Edit3 size={12}/></button>
-                      {isSuperAdmin && u.role !== "super_admin" && (
-                        <button onClick={() => handleDeleteUser(u.id)} style={{...S.btnDanger, padding:"6px 10px"}}><Trash2 size={12}/></button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
-            )}
+                      );
+                    })
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
 
@@ -1492,6 +1945,14 @@ export default function Admin({ session, onBack }) {
           </div>
         )}
 
+        {/* ========== SOAPテンプレート ========== */}
+        {tab === "templates" && (
+          <div style={S.card}>
+            <div style={S.cardTitle}><FileText size={18} color="#6366f1"/> SOAPテンプレート管理</div>
+            <SoapTemplatePanel companies={companiesList} stores={stores}/>
+          </div>
+        )}
+
         {/* ========== 申請一覧 ========== */}
         {tab === "pending" && <PendingUsersPanel onRefresh={loadData}/>}
 
@@ -1516,6 +1977,7 @@ export default function Admin({ session, onBack }) {
       {showUserAdd && (
         <UserAddModal
           stores={stores}
+          roles={rolesList}
           onClose={() => setShowUserAdd(false)}
           onSave={() => { setShowUserAdd(false); loadData(); }}
         />
@@ -1524,6 +1986,7 @@ export default function Admin({ session, onBack }) {
         <UserEditModal
           user={showUserEdit}
           stores={stores}
+          roles={rolesList}
           onClose={() => setShowUserEdit(null)}
           onSave={() => { setShowUserEdit(null); loadData(); }}
         />
