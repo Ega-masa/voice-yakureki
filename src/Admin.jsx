@@ -214,12 +214,11 @@ function UserAddModal({ stores, roles, myRole, myRoleId, onClose, onSave }) {
 }
 
 // === User Edit Modal ===
-function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, allStores, onClose, onSave }) {
+function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, myPermissions, allStores, onClose, onSave }) {
   const isMeTopLevel = myRole === "super_admin";
   const [form, setForm] = useState({
     display_name: user.display_name || "",
     employee_id: user.employee_id || "",
-    email: user.email || "",
     role_id: user.role_id || "",
     company_id: user.company_id || "",
     store_id: user.user_stores?.[0]?.store_id || "",
@@ -227,15 +226,26 @@ function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, allSt
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  const [newPass, setNewPass] = useState("");
+  const [passMsg, setPassMsg] = useState("");
+  const [resettingPass, setResettingPass] = useState(false);
+
+  // 権限チェック
+  const perms = myPermissions || [];
+  const canView = isMeTopLevel || perms.includes("admin.user.view") || perms.includes("admin.user");
+  const canEdit = isMeTopLevel || perms.includes("admin.user.edit") || perms.includes("admin.user");
+  const canChangeRole = isMeTopLevel || perms.includes("admin.user.role");
+  const canChangeCompany = isMeTopLevel || perms.includes("admin.user.company");
+  const canResetPassword = isMeTopLevel || perms.includes("admin.user.password");
+  const canDeleteUser = isMeTopLevel || perms.includes("admin.user.delete");
 
   // sort_orderベースのロール階層
   const myRoleObj = roles.find(r => r.id === myRoleId);
   const mySortOrder = myRoleObj?.sort_order ?? (myRole === "super_admin" ? 0 : 99);
   const assignableRoles = roles.filter(r => r.is_active && (r.sort_order ?? 99) >= mySortOrder);
-
   const targetRoleObj = roles.find(r => r.id === user.role_id);
   const targetSortOrder = targetRoleObj?.sort_order ?? (user.role === "super_admin" ? 0 : user.role === "store_admin" ? 1 : 99);
-  const canEditRole = mySortOrder <= targetSortOrder;
+  const canEditThisRole = mySortOrder <= targetSortOrder && canChangeRole;
 
   useEffect(() => {
     if (!form.role_id && user.role && roles.length > 0) {
@@ -245,44 +255,27 @@ function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, allSt
     }
   }, [roles, user.role]);
 
-  // 会社変更に連動して店舗リストを切り替え
   const selectedCompanyId = form.company_id;
   const storeSource = isMeTopLevel ? (allStores || stores) : stores;
   const filteredStores = selectedCompanyId ? storeSource.filter(s => s.company_id === selectedCompanyId) : storeSource;
   const companyName = companies?.find(c => c.id === selectedCompanyId)?.name;
 
-  // 会社変更時に店舗をリセット
-  const handleCompanyChange = (newCompanyId) => {
-    setForm(p => ({...p, company_id: newCompanyId, store_id: ""}));
-  };
+  const handleCompanyChange = (v) => setForm(p => ({...p, company_id: v, store_id: ""}));
 
   const handleSave = async () => {
     setSaving(true); setErr("");
     try {
       const selectedRole = roles.find(r => r.id === form.role_id);
       const legacyRole = selectedRole?.name === "全体管理者" ? "super_admin" : selectedRole?.name === "店舗管理者" ? "store_admin" : "pharmacist";
-
-      const updates = {
-        display_name: form.display_name,
-        employee_id: form.employee_id,
-        role: legacyRole,
-        role_id: form.role_id || null,
-        is_approved: form.is_approved,
-      };
-      // super_adminは会社も変更可能
-      if (isMeTopLevel) {
-        updates.company_id = form.company_id || null;
-      }
-
+      const updates = { display_name: form.display_name, employee_id: form.employee_id, is_approved: form.is_approved };
+      if (canEditThisRole) { updates.role = legacyRole; updates.role_id = form.role_id || null; }
+      if (canChangeCompany) { updates.company_id = form.company_id || null; }
       const { error } = await supabase.from("users").update(updates).eq("id", user.id);
       if (error) throw error;
-
-      // 店舗紐付け
       if (form.store_id) {
         await supabase.from("user_stores").delete().eq("user_id", user.id);
         await supabase.from("user_stores").insert({ user_id: user.id, store_id: form.store_id, role: legacyRole });
       } else if (!form.store_id && user.user_stores?.length > 0) {
-        // 店舗を「未所属」に変更した場合
         await supabase.from("user_stores").delete().eq("user_id", user.id);
       }
       onSave();
@@ -290,67 +283,109 @@ function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, allSt
     setSaving(false);
   };
 
+  const handleResetPassword = async () => {
+    if (!newPass || newPass.length < 6) { setPassMsg("❌ 6文字以上のパスワードを入力してください"); return; }
+    setResettingPass(true); setPassMsg("");
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session?.data?.session?.access_token;
+      const r = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ action: "reset_password", target_user_id: user.id, new_password: newPass }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "リセットに失敗しました");
+      setPassMsg("✅ パスワードをリセットしました");
+      setNewPass("");
+      // リセット依頼フラグをクリア
+      try { await supabase.from("users").update({ password_reset_requested: false }).eq("id", user.id); } catch {}
+    } catch (e) { setPassMsg("❌ " + e.message); }
+    setResettingPass(false);
+    setTimeout(() => setPassMsg(""), 5000);
+  };
+
   return (
     <div style={S.modal} onClick={onClose}>
-      <div style={{...S.modalBox, maxWidth:500}} onClick={e => e.stopPropagation()}>
+      <div style={{...S.modalBox, maxWidth:520}} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
           <h3 style={{ margin:0, fontSize:16, fontWeight:800 }}>ユーザーを編集</h3>
           <button onClick={onClose} style={{ background:"#f1f5f9", border:"none", borderRadius:8, width:30, height:30, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}><X size={15} color="#64748b"/></button>
         </div>
-        <div style={{ fontSize:12, color:"#64748b", marginBottom:12, padding:"6px 10px", background:"#f8fafc", borderRadius:8 }}>
-          {user.email}
-        </div>
+        <div style={{ fontSize:12, color:"#64748b", marginBottom:12, padding:"6px 10px", background:"#f8fafc", borderRadius:8 }}>{user.email}</div>
+
+        {/* 基本情報 */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
           <div>
             <label style={S.label}>氏名</label>
-            <input style={S.input} value={form.display_name} onChange={e => setForm(p => ({...p, display_name: e.target.value}))} placeholder="氏名" />
+            <input style={S.input} value={form.display_name} onChange={e => setForm(p => ({...p, display_name: e.target.value}))} placeholder="氏名" disabled={!canEdit}/>
           </div>
           <div>
             <label style={S.label}>社員番号</label>
-            <input style={S.input} value={form.employee_id} onChange={e => setForm(p => ({...p, employee_id: e.target.value}))} placeholder="社員番号" />
+            <input style={S.input} value={form.employee_id} onChange={e => setForm(p => ({...p, employee_id: e.target.value}))} placeholder="社員番号" disabled={!canEdit}/>
           </div>
         </div>
-        {/* 会社（super_adminのみ変更可） */}
-        <div style={{ marginBottom:10 }}>
-          <label style={S.label}>所属会社{!isMeTopLevel && <span style={{ fontWeight:400, color:"#94a3b8" }}>（変更不可）</span>}</label>
-          {isMeTopLevel ? (
+
+        {/* 会社 */}
+        {canChangeCompany ? (
+          <div style={{ marginBottom:10 }}>
+            <label style={S.label}>所属会社</label>
             <select style={S.input} value={form.company_id} onChange={e => handleCompanyChange(e.target.value)}>
               <option value="">未所属</option>
               {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name}（{c.company_code}）</option>)}
             </select>
-          ) : (
-            <div style={{...S.input, background:"#f8fafc", color:"#64748b"}}>{companyName || "未所属"}</div>
-          )}
-        </div>
+          </div>
+        ) : companyName ? (
+          <div style={{ marginBottom:10 }}>
+            <label style={S.label}>所属会社</label>
+            <div style={{...S.input, background:"#f8fafc", color:"#64748b"}}>{companyName}</div>
+          </div>
+        ) : null}
+
+        {/* ロール + 店舗 */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
           <div>
-            <label style={S.label}>ロール{!canEditRole && <span style={{ fontWeight:400, color:"#d97706" }}>（変更不可）</span>}</label>
-            <select style={{...S.input, opacity:canEditRole?1:0.5}} value={form.role_id} onChange={e => setForm(p => ({...p, role_id: e.target.value}))} disabled={!canEditRole}>
+            <label style={S.label}>ロール{!canEditThisRole && <span style={{ fontWeight:400, color:"#d97706", fontSize:9 }}>（変更不可）</span>}</label>
+            <select style={{...S.input, opacity:canEditThisRole?1:0.5}} value={form.role_id} onChange={e => setForm(p => ({...p, role_id: e.target.value}))} disabled={!canEditThisRole}>
               <option value="">未設定</option>
-              {assignableRoles.map(r => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
+              {assignableRoles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
           </div>
           <div>
-            <label style={S.label}>所属店舗{companyName && <span style={{ fontWeight:400, color:"#94a3b8" }}>（{companyName}）</span>}</label>
-            <select style={S.input} value={form.store_id} onChange={e => setForm(p => ({...p, store_id: e.target.value}))}>
+            <label style={S.label}>所属店舗{companyName && <span style={{ fontWeight:400, color:"#94a3b8", fontSize:9 }}>（{companyName}）</span>}</label>
+            <select style={S.input} value={form.store_id} onChange={e => setForm(p => ({...p, store_id: e.target.value}))} disabled={!canEdit}>
               <option value="">未所属</option>
               {filteredStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
         </div>
+
         <div style={{ marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>
           <label style={{ fontSize:12, fontWeight:700, color:"#475569", cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
-            <input type="checkbox" checked={form.is_approved} onChange={e => setForm(p => ({...p, is_approved: e.target.checked}))} style={{ width:16, height:16 }}/>
+            <input type="checkbox" checked={form.is_approved} onChange={e => setForm(p => ({...p, is_approved: e.target.checked}))} style={{ width:16, height:16 }} disabled={!canEdit}/>
             承認済み
           </label>
         </div>
+
         {err && <div style={{ fontSize:11, color:"#dc2626", marginBottom:8, padding:"6px 10px", background:"#fef2f2", borderRadius:8 }}>{err}</div>}
-        <button onClick={handleSave} disabled={saving} style={S.btn()}>
+        <button onClick={handleSave} disabled={saving || !canEdit} style={{...S.btn(), width:"100%", justifyContent:"center", opacity:canEdit?1:0.5}}>
           {saving ? <Loader2 size={14} style={{ animation:"spin 1s linear infinite" }}/> : <Save size={14}/>}
           保存
         </button>
+
+        {/* パスワードリセット */}
+        {canResetPassword && (
+          <div style={{ marginTop:16, padding:"12px 14px", background:"#fef3c7", borderRadius:10, border:"1px solid #fde68a" }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#92400e", marginBottom:8 }}>パスワードリセット</div>
+            <div style={{ display:"flex", gap:6 }}>
+              <input type="text" value={newPass} onChange={e => setNewPass(e.target.value)} placeholder="新しいパスワード（6文字以上）" style={{...S.input, flex:1, marginBottom:0, fontSize:12}}/>
+              <button onClick={handleResetPassword} disabled={resettingPass} style={{...S.btn("#d97706"), whiteSpace:"nowrap", fontSize:11}}>
+                {resettingPass ? <Loader2 size={12} style={{ animation:"spin 1s linear infinite" }}/> : "リセット"}
+              </button>
+            </div>
+            {passMsg && <div style={{ fontSize:11, marginTop:6, color:passMsg.startsWith("✅")?"#059669":"#dc2626", fontWeight:600 }}>{passMsg}</div>}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1925,6 +1960,7 @@ export default function Admin({ session, onBack }) {
   const [companiesList, setCompaniesList] = useState([]);
   const [storeFilterCompany, setStoreFilterCompany] = useState("all");
   const [rolesList, setRolesList] = useState([]);
+  const [myPermissions, setMyPermissions] = useState([]);
   // ユーザー検索・フィルタ
   const [userSearch, setUserSearch] = useState("");
   const [userFilterCompany, setUserFilterCompany] = useState("all");
@@ -1948,6 +1984,14 @@ export default function Admin({ session, onBack }) {
       // ロール一覧（先に取得 → レベル計算に使う）
       const { data: rolesData } = await supabase.from("roles").select("*").order("sort_order").order("created_at");
       setRolesList(rolesData || []);
+
+      // 自分の権限を取得
+      if (me.role_id) {
+        const { data: rpData } = await supabase.from("role_permissions").select("permission_id, permissions(key)").eq("role_id", me.role_id);
+        setMyPermissions((rpData || []).map(rp => rp.permissions?.key).filter(Boolean));
+      } else if (isSA) {
+        setMyPermissions(["all"]); // super_adminは全権限
+      }
 
       // 自分のロールのsort_order（小さい数字=上位）
       const myRoleObj = (rolesData || []).find(r => r.id === me.role_id);
@@ -2228,6 +2272,7 @@ export default function Admin({ session, onBack }) {
                               </div>
                             </div>
                             {u.is_approved===false && <span style={S.badge("#d97706","#fffbeb")}>未承認</span>}
+                            {u.password_reset_requested && <span style={S.badge("#dc2626","#fef2f2")}>PW依頼</span>}
                             <span style={S.badge(roleColor, roleBg)}>{roleName}</span>
                             {canEdit && <button onClick={() => setShowUserEdit(u)} style={{...S.btnOutline, padding:"6px 10px"}}><Edit3 size={12}/></button>}
                             {canDelete && (
@@ -2324,6 +2369,7 @@ export default function Admin({ session, onBack }) {
           companies={companiesList}
           myRole={userInfo.role}
           myRoleId={userInfo.role_id}
+          myPermissions={myPermissions}
           onClose={() => setShowUserEdit(null)}
           onSave={() => { setShowUserEdit(null); loadData(); }}
         />
