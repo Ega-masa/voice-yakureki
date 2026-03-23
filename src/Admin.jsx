@@ -886,8 +886,10 @@ function RolePanel({ onRefresh }) {
   };
 
   const handleDelete = async (role) => {
-    if (role.is_system) return;
-    if (!confirm(`ロール「${role.name}」を削除しますか？\nこのロールが割り当てられているユーザーのロールは解除されます。`)) return;
+    const msg = role.is_system
+      ? `⚠️ システムロール「${role.name}」を削除しますか？\n\nこのロールが割り当てられているユーザーのロールは解除されます。\nシステムロールの削除は影響が大きいため、十分注意してください。`
+      : `ロール「${role.name}」を削除しますか？\nこのロールが割り当てられているユーザーのロールは解除されます。`;
+    if (!confirm(msg)) return;
     try {
       await supabase.from("users").update({ role_id: null }).eq("role_id", role.id);
       await supabase.from("role_permissions").delete().eq("role_id", role.id);
@@ -898,7 +900,9 @@ function RolePanel({ onRefresh }) {
   };
 
   const handleToggleActive = async (role) => {
-    if (role.is_system) return;
+    if (role.is_system && role.is_active) {
+      if (!confirm(`⚠️ システムロール「${role.name}」を無効にしますか？\n既存ユーザーに影響する可能性があります。`)) return;
+    }
     await supabase.from("roles").update({ is_active: !role.is_active }).eq("id", role.id);
     load();
   };
@@ -959,14 +963,10 @@ function RolePanel({ onRefresh }) {
               </div>
               <div style={{ display:"flex", gap:4 }}>
                 <button onClick={() => openEdit(role)} style={{...S.btnOutline, padding:"6px 10px"}}><Edit3 size={12}/></button>
-                {!role.is_system && (
-                  <>
-                    <button onClick={() => handleToggleActive(role)} style={{...S.btnOutline, padding:"6px 10px"}}>
-                      {role.is_active ? <XCircle size={12} color="#ef4444"/> : <CheckCircle size={12} color="#059669"/>}
-                    </button>
-                    <button onClick={() => handleDelete(role)} style={{...S.btnDanger, padding:"6px 10px"}}><Trash2 size={12}/></button>
-                  </>
-                )}
+                <button onClick={() => handleToggleActive(role)} style={{...S.btnOutline, padding:"6px 10px"}}>
+                  {role.is_active ? <XCircle size={12} color="#ef4444"/> : <CheckCircle size={12} color="#059669"/>}
+                </button>
+                <button onClick={() => handleDelete(role)} style={{...S.btnDanger, padding:"6px 10px"}}><Trash2 size={12}/></button>
               </div>
             </div>
             {/* 権限バッジ */}
