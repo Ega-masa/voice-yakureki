@@ -1976,13 +1976,13 @@ export default function Admin({ session, onBack }) {
       <header style={S.header}>
         <div style={S.headerInner}>
           <button onClick={onBack} style={{ background:"none", border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
-            <ArrowLeft size={16} color="#94a3b8"/>
-            <span style={{ fontSize:11, color:"#94a3b8", fontWeight:600 }}>アプリに戻る</span>
+            {isSuperAdmin ? <LogOut size={16} color="#94a3b8"/> : <ArrowLeft size={16} color="#94a3b8"/>}
+            <span style={{ fontSize:11, color:"#94a3b8", fontWeight:600 }}>{isSuperAdmin ? "ログアウト" : "アプリに戻る"}</span>
           </button>
           <div style={{ flex:1 }}/>
           <div style={S.headerIcon}><Shield size={16} color="#fff"/></div>
           <div>
-            <div style={S.headerTitle}>管理画面</div>
+            <div style={S.headerTitle}>{isSuperAdmin ? "システム管理" : "管理画面"}</div>
             <div style={S.headerSub}>{userInfo.display_name || userInfo.email}</div>
           </div>
           <div style={{ flex:1 }}/>
