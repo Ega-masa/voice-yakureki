@@ -6,7 +6,7 @@ import {
   Building2, Users, Key, BarChart3, Plus, Trash2, Edit3, Save, X, 
   ArrowLeft, Shield, ShieldCheck, UserCheck, Loader2, RefreshCw,
   CheckCircle, XCircle, Copy, Eye, EyeOff, LogOut, ChevronDown, Check,
-  Settings, Search, ArrowUp, ArrowDown, FileText, AlertTriangle
+  Settings, Search, ArrowUp, ArrowDown, FileText, AlertTriangle, Pill, Upload
 } from "lucide-react";
 
 // === Styles ===
@@ -1427,6 +1427,237 @@ function SoapTemplatePanel({ companies, stores }) {
   );
 }
 
+// === Drug Master Management (医薬品マスタ) ===
+const DRUG_CATEGORIES = {
+  general: { label:"一般", color:"#2563eb" },
+  highrisk: { label:"ハイリスク", color:"#dc2626" },
+  narcotic: { label:"麻薬・向精神薬", color:"#7c3aed" },
+  biologics: { label:"生物学的製剤", color:"#0891b2" },
+};
+
+function DrugMasterPanel() {
+  const [drugs, setDrugs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [filterCat, setFilterCat] = useState("all");
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ ingredient_name:"", reading_kana:"", reading_kata:"", aliases:"", category:"general" });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [importResult, setImportResult] = useState("");
+  const fileRef = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase.from("drug_master").select("*").eq("is_active", true).order("reading_kana");
+    setDrugs(data || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openEdit = (drug) => {
+    if (drug === "new") {
+      setForm({ ingredient_name:"", reading_kana:"", reading_kata:"", aliases:"", category:"general" });
+    } else {
+      setForm({
+        ingredient_name: drug.ingredient_name,
+        reading_kana: drug.reading_kana || "",
+        reading_kata: drug.reading_kata || "",
+        aliases: (drug.aliases || []).join(", "),
+        category: drug.category || "general",
+      });
+    }
+    setEditing(drug);
+    setErr("");
+  };
+
+  const handleSave = async () => {
+    if (!form.ingredient_name.trim() || !form.reading_kana.trim()) {
+      setErr("成分名とひらがな読みは必須です"); return;
+    }
+    setSaving(true); setErr("");
+    try {
+      const aliasArr = form.aliases.split(/[,、，]/).map(a => a.trim()).filter(Boolean);
+      const row = {
+        ingredient_name: form.ingredient_name.trim(),
+        reading_kana: form.reading_kana.trim(),
+        reading_kata: form.reading_kata.trim() || form.ingredient_name.trim(),
+        aliases: aliasArr,
+        category: form.category,
+        updated_at: new Date().toISOString(),
+      };
+      if (editing === "new") {
+        const { error } = await supabase.from("drug_master").insert(row);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("drug_master").update(row).eq("id", editing.id);
+        if (error) throw error;
+      }
+      setEditing(null);
+      load();
+    } catch (e) { setErr(e.message); }
+    setSaving(false);
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm("この医薬品を削除しますか？")) return;
+    await supabase.from("drug_master").delete().eq("id", id);
+    load();
+  };
+
+  // CSVインポート: 成分名,ひらがな読み,カテゴリ
+  const handleImport = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportResult("読み込み中...");
+    try {
+      const text = await file.text();
+      const lines = text.split("\n").filter(l => l.trim());
+      // ヘッダー行をスキップ
+      const start = lines[0].includes("成分名") || lines[0].includes("ingredient") ? 1 : 0;
+      const rows = [];
+      for (let i = start; i < lines.length; i++) {
+        const cols = lines[i].split(",").map(c => c.trim().replace(/^["']|["']$/g, ""));
+        if (cols.length < 2 || !cols[0]) continue;
+        rows.push({
+          ingredient_name: cols[0],
+          reading_kana: cols[1] || "",
+          reading_kata: cols[2] || cols[0],
+          category: cols[3] || "general",
+          aliases: cols[4] ? cols[4].split("|").map(a => a.trim()) : [],
+          is_active: true,
+          updated_at: new Date().toISOString(),
+        });
+      }
+      if (rows.length === 0) { setImportResult("❌ 有効なデータがありません"); return; }
+      const { error } = await supabase.from("drug_master").upsert(rows, { onConflict: "ingredient_name" });
+      if (error) throw error;
+      setImportResult(`✅ ${rows.length}件インポート完了`);
+      load();
+    } catch (e) { setImportResult("❌ " + e.message); }
+    e.target.value = "";
+    setTimeout(() => setImportResult(""), 5000);
+  };
+
+  // フィルタ
+  const q = search.trim().toLowerCase();
+  const filtered = drugs.filter(d => {
+    if (filterCat !== "all" && d.category !== filterCat) return false;
+    if (q && !d.ingredient_name.toLowerCase().includes(q) && !d.reading_kana.includes(q) && !(d.reading_kata||"").toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  if (loading) return <div style={{ textAlign:"center", padding:30 }}><Loader2 size={24} style={{ animation:"spin 1s linear infinite", color:"#94a3b8" }}/></div>;
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, flexWrap:"wrap", gap:8 }}>
+        <div style={{ fontSize:12, color:"#94a3b8" }}>登録成分数: {drugs.length}</div>
+        <div style={{ display:"flex", gap:6 }}>
+          <label style={{...S.btnOutline, cursor:"pointer", display:"flex", alignItems:"center", gap:4, fontSize:11 }}>
+            <Upload size={12}/> CSVインポート
+            <input type="file" accept=".csv,.txt" onChange={handleImport} style={{ display:"none" }}/>
+          </label>
+          <button onClick={() => openEdit("new")} style={S.btn()}>
+            <Plus size={14}/> 新規追加
+          </button>
+        </div>
+      </div>
+      {importResult && <div style={{ fontSize:12, fontWeight:600, color:importResult.startsWith("✅")?"#059669":"#dc2626", marginBottom:10, padding:"6px 10px", background:importResult.startsWith("✅")?"#ecfdf5":"#fef2f2", borderRadius:8 }}>{importResult}</div>}
+
+      {/* 検索・フィルタ */}
+      <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+        <div style={{ flex:1, position:"relative" }}>
+          <Search size={14} color="#94a3b8" style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)" }}/>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="成分名・読みで検索..." style={{...S.input, paddingLeft:32, fontSize:12 }}/>
+        </div>
+        <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={{ padding:"6px 10px", borderRadius:8, border:"1px solid #e2e8f0", fontSize:11, fontWeight:600, cursor:"pointer", outline:"none" }}>
+          <option value="all">全分類</option>
+          {Object.entries(DRUG_CATEGORIES).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+        </select>
+      </div>
+
+      <div style={{ fontSize:11, color:"#94a3b8", marginBottom:8 }}>{filtered.length}件表示</div>
+
+      {/* 医薬品リスト */}
+      <div style={{ maxHeight:400, overflowY:"auto" }}>
+        {filtered.length === 0 ? <div style={S.empty}>該当なし</div> : (
+          filtered.map(d => {
+            const cat = DRUG_CATEGORIES[d.category] || DRUG_CATEGORIES.general;
+            return (
+              <div key={d.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:"1px solid #f1f5f9" }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>{d.ingredient_name}</span>
+                    <span style={{ fontSize:9, fontWeight:600, color:cat.color, background:`${cat.color}15`, padding:"1px 5px", borderRadius:4 }}>{cat.label}</span>
+                  </div>
+                  <div style={{ fontSize:10, color:"#94a3b8" }}>
+                    {d.reading_kana}
+                    {(d.aliases||[]).length > 0 && <span> · 別名: {d.aliases.join(", ")}</span>}
+                  </div>
+                </div>
+                <button onClick={() => openEdit(d)} style={{...S.btnOutline, padding:"4px 8px"}}><Edit3 size={11}/></button>
+                <button onClick={() => handleDelete(d.id)} style={{...S.btnDanger, padding:"4px 8px"}}><Trash2 size={11}/></button>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* CSV形式の説明 */}
+      <div style={{ marginTop:14, fontSize:10, color:"#94a3b8", lineHeight:1.6, background:"#f8fafc", borderRadius:8, padding:"8px 12px" }}>
+        CSVフォーマット: <code style={{ background:"#e2e8f0", padding:"1px 4px", borderRadius:3 }}>成分名,ひらがな読み,カタカナ読み,カテゴリ,別名1|別名2</code><br/>
+        毎月の新薬追加はCSVファイルで一括インポートできます。同じ成分名があれば上書き更新されます。
+      </div>
+
+      {/* 編集モーダル */}
+      {editing !== null && (
+        <div style={S.modal} onClick={() => setEditing(null)}>
+          <div style={{...S.modalBox, maxWidth:480 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+              <div style={{ fontSize:16, fontWeight:800, color:"#0f172a" }}>{editing === "new" ? "新規医薬品追加" : "医薬品を編集"}</div>
+              <button onClick={() => setEditing(null)} style={{ background:"none", border:"none", cursor:"pointer" }}><X size={20} color="#94a3b8"/></button>
+            </div>
+            {err && <div style={{ background:"#fef2f2", color:"#dc2626", padding:"8px 12px", borderRadius:8, fontSize:12, marginBottom:12 }}>{err}</div>}
+            <div style={{ marginBottom:10 }}>
+              <label style={S.label}>成分名 *（正式表記）</label>
+              <input value={form.ingredient_name} onChange={e => setForm({...form, ingredient_name:e.target.value})} style={S.input} placeholder="例: アムロジピン"/>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+              <div>
+                <label style={S.label}>ひらがな読み *</label>
+                <input value={form.reading_kana} onChange={e => setForm({...form, reading_kana:e.target.value})} style={S.input} placeholder="例: あむろじぴん"/>
+              </div>
+              <div>
+                <label style={S.label}>カタカナ読み</label>
+                <input value={form.reading_kata} onChange={e => setForm({...form, reading_kata:e.target.value})} style={S.input} placeholder="例: アムロジピン"/>
+              </div>
+            </div>
+            <div style={{ marginBottom:10 }}>
+              <label style={S.label}>分類</label>
+              <select value={form.category} onChange={e => setForm({...form, category:e.target.value})} style={S.input}>
+                {Object.entries(DRUG_CATEGORIES).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+              </select>
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <label style={S.label}>別名・Whisper誤変換候補（カンマ区切り）</label>
+              <input value={form.aliases} onChange={e => setForm({...form, aliases:e.target.value})} style={S.input} placeholder="例: アムロジビン, あむろぢぴん"/>
+            </div>
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+              <button onClick={() => setEditing(null)} style={S.btnOutline}>キャンセル</button>
+              <button onClick={handleSave} disabled={saving} style={S.btn()}>
+                {saving ? <Loader2 size={14} style={{ animation:"spin 1s linear infinite" }}/> : <Save size={14}/>}
+                {editing === "new" ? "追加" : "保存"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // === Company Management (会社管理) ===
 function CompanyPanel({ onRefresh }) {
   const [companies, setCompanies] = useState([]);
@@ -1736,6 +1967,7 @@ export default function Admin({ session, onBack }) {
     { id:"stats", label:"統計", icon:BarChart3 },
     { id:"roles", label:"ロール", icon:Settings },
     { id:"templates", label:"テンプレート", icon:FileText },
+    { id:"drugs", label:"医薬品", icon:Pill },
   ];
 
   return (
@@ -1950,6 +2182,14 @@ export default function Admin({ session, onBack }) {
           <div style={S.card}>
             <div style={S.cardTitle}><FileText size={18} color="#6366f1"/> SOAPテンプレート管理</div>
             <SoapTemplatePanel companies={companiesList} stores={stores}/>
+          </div>
+        )}
+
+        {/* ========== 医薬品マスタ ========== */}
+        {tab === "drugs" && (
+          <div style={S.card}>
+            <div style={S.cardTitle}><Pill size={18} color="#6366f1"/> 医薬品マスタ管理</div>
+            <DrugMasterPanel/>
           </div>
         )}
 
