@@ -214,11 +214,14 @@ function UserAddModal({ stores, roles, myRole, myRoleId, onClose, onSave }) {
 }
 
 // === User Edit Modal ===
-function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, onClose, onSave }) {
+function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, allStores, onClose, onSave }) {
+  const isMeTopLevel = myRole === "super_admin";
   const [form, setForm] = useState({
     display_name: user.display_name || "",
     employee_id: user.employee_id || "",
+    email: user.email || "",
     role_id: user.role_id || "",
+    company_id: user.company_id || "",
     store_id: user.user_stores?.[0]?.store_id || "",
     is_approved: user.is_approved !== false,
   });
@@ -230,12 +233,10 @@ function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, onClo
   const mySortOrder = myRoleObj?.sort_order ?? (myRole === "super_admin" ? 0 : 99);
   const assignableRoles = roles.filter(r => r.is_active && (r.sort_order ?? 99) >= mySortOrder);
 
-  // 対象ユーザーのロールレベル
   const targetRoleObj = roles.find(r => r.id === user.role_id);
   const targetSortOrder = targetRoleObj?.sort_order ?? (user.role === "super_admin" ? 0 : user.role === "store_admin" ? 1 : 99);
-  const canEditRole = mySortOrder <= targetSortOrder; // 自分と同格以下のみ変更可
+  const canEditRole = mySortOrder <= targetSortOrder;
 
-  // role_idが空の場合、legacyロールからマッチングを試みる
   useEffect(() => {
     if (!form.role_id && user.role && roles.length > 0) {
       const legacyMap = { super_admin: "全体管理者", store_admin: "店舗管理者", pharmacist: "薬剤師" };
@@ -244,10 +245,16 @@ function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, onClo
     }
   }, [roles, user.role]);
 
-  // ユーザーの会社に属する店舗のみ表示
-  const userCompanyId = user.company_id;
-  const filteredStores = userCompanyId ? stores.filter(s => s.company_id === userCompanyId) : stores;
-  const companyName = companies?.find(c => c.id === userCompanyId)?.name;
+  // 会社変更に連動して店舗リストを切り替え
+  const selectedCompanyId = form.company_id;
+  const storeSource = isMeTopLevel ? (allStores || stores) : stores;
+  const filteredStores = selectedCompanyId ? storeSource.filter(s => s.company_id === selectedCompanyId) : storeSource;
+  const companyName = companies?.find(c => c.id === selectedCompanyId)?.name;
+
+  // 会社変更時に店舗をリセット
+  const handleCompanyChange = (newCompanyId) => {
+    setForm(p => ({...p, company_id: newCompanyId, store_id: ""}));
+  };
 
   const handleSave = async () => {
     setSaving(true); setErr("");
@@ -255,18 +262,28 @@ function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, onClo
       const selectedRole = roles.find(r => r.id === form.role_id);
       const legacyRole = selectedRole?.name === "全体管理者" ? "super_admin" : selectedRole?.name === "店舗管理者" ? "store_admin" : "pharmacist";
 
-      const { error } = await supabase.from("users").update({
+      const updates = {
         display_name: form.display_name,
         employee_id: form.employee_id,
         role: legacyRole,
         role_id: form.role_id || null,
         is_approved: form.is_approved,
-      }).eq("id", user.id);
+      };
+      // super_adminは会社も変更可能
+      if (isMeTopLevel) {
+        updates.company_id = form.company_id || null;
+      }
+
+      const { error } = await supabase.from("users").update(updates).eq("id", user.id);
       if (error) throw error;
 
+      // 店舗紐付け
       if (form.store_id) {
         await supabase.from("user_stores").delete().eq("user_id", user.id);
         await supabase.from("user_stores").insert({ user_id: user.id, store_id: form.store_id, role: legacyRole });
+      } else if (!form.store_id && user.user_stores?.length > 0) {
+        // 店舗を「未所属」に変更した場合
+        await supabase.from("user_stores").delete().eq("user_id", user.id);
       }
       onSave();
     } catch (e) { setErr(e.message); }
@@ -275,37 +292,53 @@ function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, onClo
 
   return (
     <div style={S.modal} onClick={onClose}>
-      <div style={S.modalBox} onClick={e => e.stopPropagation()}>
+      <div style={{...S.modalBox, maxWidth:500}} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
           <h3 style={{ margin:0, fontSize:16, fontWeight:800 }}>ユーザーを編集</h3>
           <button onClick={onClose} style={{ background:"#f1f5f9", border:"none", borderRadius:8, width:30, height:30, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}><X size={15} color="#64748b"/></button>
         </div>
         <div style={{ fontSize:12, color:"#64748b", marginBottom:12, padding:"6px 10px", background:"#f8fafc", borderRadius:8 }}>
-          {user.email}{companyName && <span style={{ marginLeft:8, fontSize:10, color:"#0d9488", fontWeight:700 }}>({companyName})</span>}
+          {user.email}
         </div>
-        <div style={{ marginBottom:10 }}>
-          <label style={S.label}>氏名</label>
-          <input style={S.input} value={form.display_name} onChange={e => setForm(p => ({...p, display_name: e.target.value}))} placeholder="氏名" />
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+          <div>
+            <label style={S.label}>氏名</label>
+            <input style={S.input} value={form.display_name} onChange={e => setForm(p => ({...p, display_name: e.target.value}))} placeholder="氏名" />
+          </div>
+          <div>
+            <label style={S.label}>社員番号</label>
+            <input style={S.input} value={form.employee_id} onChange={e => setForm(p => ({...p, employee_id: e.target.value}))} placeholder="社員番号" />
+          </div>
         </div>
+        {/* 会社（super_adminのみ変更可） */}
         <div style={{ marginBottom:10 }}>
-          <label style={S.label}>社員番号</label>
-          <input style={S.input} value={form.employee_id} onChange={e => setForm(p => ({...p, employee_id: e.target.value}))} placeholder="社員番号" />
+          <label style={S.label}>所属会社{!isMeTopLevel && <span style={{ fontWeight:400, color:"#94a3b8" }}>（変更不可）</span>}</label>
+          {isMeTopLevel ? (
+            <select style={S.input} value={form.company_id} onChange={e => handleCompanyChange(e.target.value)}>
+              <option value="">未所属</option>
+              {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name}（{c.company_code}）</option>)}
+            </select>
+          ) : (
+            <div style={{...S.input, background:"#f8fafc", color:"#64748b"}}>{companyName || "未所属"}</div>
+          )}
         </div>
-        <div style={{ marginBottom:10 }}>
-          <label style={S.label}>ロール{!canEditRole && <span style={{ fontWeight:400, color:"#d97706" }}>（上位ロールのため変更不可）</span>}</label>
-          <select style={{...S.input, opacity:canEditRole?1:0.5}} value={form.role_id} onChange={e => setForm(p => ({...p, role_id: e.target.value}))} disabled={!canEditRole}>
-            <option value="">未設定</option>
-            {assignableRoles.map(r => (
-              <option key={r.id} value={r.id}>{r.name}{r.description ? ` — ${r.description}` : ""}</option>
-            ))}
-          </select>
-        </div>
-        <div style={{ marginBottom:10 }}>
-          <label style={S.label}>所属店舗{companyName && <span style={{ fontWeight:400, color:"#94a3b8" }}>（{companyName}内）</span>}</label>
-          <select style={S.input} value={form.store_id} onChange={e => setForm(p => ({...p, store_id: e.target.value}))}>
-            <option value="">未所属</option>
-            {filteredStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+          <div>
+            <label style={S.label}>ロール{!canEditRole && <span style={{ fontWeight:400, color:"#d97706" }}>（変更不可）</span>}</label>
+            <select style={{...S.input, opacity:canEditRole?1:0.5}} value={form.role_id} onChange={e => setForm(p => ({...p, role_id: e.target.value}))} disabled={!canEditRole}>
+              <option value="">未設定</option>
+              {assignableRoles.map(r => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={S.label}>所属店舗{companyName && <span style={{ fontWeight:400, color:"#94a3b8" }}>（{companyName}）</span>}</label>
+            <select style={S.input} value={form.store_id} onChange={e => setForm(p => ({...p, store_id: e.target.value}))}>
+              <option value="">未所属</option>
+              {filteredStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
         </div>
         <div style={{ marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>
           <label style={{ fontSize:12, fontWeight:700, color:"#475569", cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
@@ -2286,6 +2319,7 @@ export default function Admin({ session, onBack }) {
         <UserEditModal
           user={showUserEdit}
           stores={stores}
+          allStores={stores}
           roles={rolesList}
           companies={companiesList}
           myRole={userInfo.role}
