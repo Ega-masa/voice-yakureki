@@ -122,20 +122,20 @@ function StoreFormModal({ store, companies, onClose, onSave }) {
 }
 
 // === User Add Modal ===
-function UserAddModal({ stores, roles, myRole, onClose, onSave }) {
+function UserAddModal({ stores, roles, myRole, myRoleId, onClose, onSave }) {
   const [form, setForm] = useState({ email: "", password: "", store_id: "", role_id: "" });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
-  // 自分のロールより上位は選択不可
-  const ROLE_LEVEL = { "全体管理者":3, "店舗管理者":2, "薬剤師":1 };
-  const myLevel = myRole === "super_admin" ? 3 : myRole === "store_admin" ? 2 : 1;
-  const assignableRoles = roles.filter(r => r.is_active && (ROLE_LEVEL[r.name] || 1) <= myLevel);
+  // sort_orderベース: 自分と同格以下（数値が大きい=下位）のロールのみ選択可
+  const myRoleObj = roles.find(r => r.id === myRoleId);
+  const mySortOrder = myRoleObj?.sort_order ?? (myRole === "super_admin" ? 0 : 99);
+  const assignableRoles = roles.filter(r => r.is_active && (r.sort_order ?? 99) >= mySortOrder);
 
-  // デフォルトロール（薬剤師）を設定
+  // デフォルトロール（一番下位）
   useEffect(() => {
     if (assignableRoles.length > 0 && !form.role_id) {
-      const defaultRole = assignableRoles.find(r => r.name === "薬剤師") || assignableRoles[assignableRoles.length - 1];
+      const defaultRole = assignableRoles[assignableRoles.length - 1];
       if (defaultRole) setForm(p => ({...p, role_id: defaultRole.id}));
     }
   }, [roles]);
@@ -214,7 +214,7 @@ function UserAddModal({ stores, roles, myRole, onClose, onSave }) {
 }
 
 // === User Edit Modal ===
-function UserEditModal({ user, stores, roles, companies, myRole, onClose, onSave }) {
+function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, onClose, onSave }) {
   const [form, setForm] = useState({
     display_name: user.display_name || "",
     employee_id: user.employee_id || "",
@@ -225,15 +225,15 @@ function UserEditModal({ user, stores, roles, companies, myRole, onClose, onSave
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
-  // ロール階層制限
-  const ROLE_LEVEL = { "全体管理者":3, "店舗管理者":2, "薬剤師":1 };
-  const myLevel = myRole === "super_admin" ? 3 : myRole === "store_admin" ? 2 : 1;
-  const assignableRoles = roles.filter(r => r.is_active && (ROLE_LEVEL[r.name] || 1) <= myLevel);
+  // sort_orderベースのロール階層
+  const myRoleObj = roles.find(r => r.id === myRoleId);
+  const mySortOrder = myRoleObj?.sort_order ?? (myRole === "super_admin" ? 0 : 99);
+  const assignableRoles = roles.filter(r => r.is_active && (r.sort_order ?? 99) >= mySortOrder);
 
   // 対象ユーザーのロールレベル
-  const targetRole = roles.find(r => r.id === user.role_id);
-  const targetLevel = targetRole ? (ROLE_LEVEL[targetRole.name] || 1) : (user.role === "super_admin" ? 3 : user.role === "store_admin" ? 2 : 1);
-  const canEditRole = myLevel >= targetLevel; // 自分と同格以下のユーザーのみロール変更可
+  const targetRoleObj = roles.find(r => r.id === user.role_id);
+  const targetSortOrder = targetRoleObj?.sort_order ?? (user.role === "super_admin" ? 0 : user.role === "store_admin" ? 1 : 99);
+  const canEditRole = mySortOrder <= targetSortOrder; // 自分と同格以下のみ変更可
 
   // role_idが空の場合、legacyロールからマッチングを試みる
   useEffect(() => {
@@ -957,6 +957,9 @@ function RolePanel({ onRefresh }) {
         <button onClick={() => openEdit("new")} style={S.btn()}>
           <Plus size={14}/> 新規ロール
         </button>
+      </div>
+      <div style={{ fontSize:10, color:"#94a3b8", marginBottom:12, padding:"6px 10px", background:"#f8fafc", borderRadius:8, lineHeight:1.6 }}>
+        上にあるロールほど権限が高くなります。↑↓で順序を変更すると権限階層が変わります。下位のロールは上位のユーザーを閲覧・操作できません。
       </div>
 
       {/* ロール一覧 */}
@@ -1909,6 +1912,14 @@ export default function Admin({ session, onBack }) {
       const isSA = me.role === "super_admin";
       const myCompanyId = me.company_id;
 
+      // ロール一覧（先に取得 → レベル計算に使う）
+      const { data: rolesData } = await supabase.from("roles").select("*").order("sort_order").order("created_at");
+      setRolesList(rolesData || []);
+
+      // 自分のロールのsort_order（小さい数字=上位）
+      const myRoleObj = (rolesData || []).find(r => r.id === me.role_id);
+      const mySortOrder = myRoleObj?.sort_order ?? (isSA ? 0 : 99);
+
       // 店舗一覧（store_adminは自社のみ）
       let storeQ = supabase.from("stores").select("*").order("created_at");
       if (!isSA && myCompanyId) storeQ = storeQ.eq("company_id", myCompanyId);
@@ -1919,11 +1930,15 @@ export default function Admin({ session, onBack }) {
       let userQ = supabase.from("users").select("*, user_stores(store_id, role, stores(name, company_id))").order("created_at");
       if (!isSA && myCompanyId) userQ = userQ.eq("company_id", myCompanyId);
       const { data: userData } = await userQ;
-      setUsersData(userData || []);
 
-      // ロール一覧
-      const { data: rolesData } = await supabase.from("roles").select("*").order("sort_order").order("created_at");
-      setRolesList(rolesData || []);
+      // 上位ロールのユーザーを非表示（自分と同格以下のみ）
+      const filteredUsers = (userData || []).filter(u => {
+        if (u.id === me.id) return true; // 自分自身は常に表示
+        const uRole = (rolesData || []).find(r => r.id === u.role_id);
+        const uSortOrder = uRole?.sort_order ?? (u.role === "super_admin" ? 0 : u.role === "store_admin" ? 1 : 99);
+        return uSortOrder >= mySortOrder; // sort_orderが自分以上（=同格か下位）のみ
+      });
+      setUsersData(filteredUsers);
 
       // APIキー一覧（super_admin のみ）
       if (isSA) {
@@ -2162,11 +2177,11 @@ export default function Admin({ session, onBack }) {
                       const roleColor = userRole?.color || ROLE_COLORS[u.role]?.color || "#64748b";
                       const roleBg = userRole ? `${userRole.color}18` : ROLE_COLORS[u.role]?.bg || "#f1f5f9";
                       const storeNames = (u.user_stores || []).map(us => us.stores?.name).filter(Boolean);
-                      const ROLE_LEVEL = { "全体管理者":3, "店舗管理者":2, "薬剤師":1 };
-                      const myLevel = isSuperAdmin ? 3 : isStoreAdmin ? 2 : 1;
-                      const uLevel = userRole ? (ROLE_LEVEL[userRole.name] || 1) : (u.role === "super_admin" ? 3 : u.role === "store_admin" ? 2 : 1);
-                      const canEdit = myLevel >= uLevel;
-                      const canDelete = isSuperAdmin && u.role !== "super_admin";
+                      const myRoleObj = rolesList.find(r => r.id === userInfo.role_id);
+                      const mySO = myRoleObj?.sort_order ?? (isSuperAdmin ? 0 : 99);
+                      const uSO = userRole?.sort_order ?? (u.role === "super_admin" ? 0 : u.role === "store_admin" ? 1 : 99);
+                      const canEdit = mySO <= uSO;
+                      const canDelete = isSuperAdmin && u.id !== userInfo.id && uSO > 0;
                       return (
                         <div key={u.id} style={S.card}>
                           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
@@ -2262,6 +2277,7 @@ export default function Admin({ session, onBack }) {
           stores={stores}
           roles={rolesList}
           myRole={userInfo.role}
+          myRoleId={userInfo.role_id}
           onClose={() => setShowUserAdd(false)}
           onSave={() => { setShowUserAdd(false); loadData(); }}
         />
@@ -2273,6 +2289,7 @@ export default function Admin({ session, onBack }) {
           roles={rolesList}
           companies={companiesList}
           myRole={userInfo.role}
+          myRoleId={userInfo.role_id}
           onClose={() => setShowUserEdit(null)}
           onSave={() => { setShowUserEdit(null); loadData(); }}
         />
