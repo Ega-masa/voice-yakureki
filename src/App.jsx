@@ -45,26 +45,24 @@ function LoginScreen({onLogin}){
   const[email,setEmail]=useState("");const[pass,setPass]=useState("");const[mode,setMode]=useState("login");
   const[fullName,setFullName]=useState("");const[employeeId,setEmployeeId]=useState("");
   const[loading,setLoading]=useState(false);const[err,setErr]=useState("");const[success,setSuccess]=useState("");
+  const[showResend,setShowResend]=useState(false);const[resending,setResending]=useState(false);
 
   const handle=async()=>{
-    const code=cc.trim().toUpperCase(); // ★ ここだけでtoUpperCase
+    const code=cc.trim().toUpperCase();
     if(!code){setErr("会社コードを入力してください");return;}
     if(!email||!pass){setErr("メールアドレスとパスワードを入力してください");return;}
     if(mode==="signup"&&!fullName.trim()){setErr("氏名を入力してください");return;}
     if(mode==="signup"&&!employeeId.trim()){setErr("社員番号を入力してください");return;}
-    setLoading(true);setErr("");setSuccess("");
+    setLoading(true);setErr("");setSuccess("");setShowResend(false);
     try{
       const company=await findCompanyByCode(code);
       if(!company)throw new Error("会社コードが見つかりません");
       if(mode==="signup"){
-        // signUpの返り値にuser.idが含まれる（メール確認前でも）
         const signUpData=await signUp(email,pass);
         const uid=signUpData?.user?.id;
         if(uid){
-          // メール確認前でもusersテーブルに即登録 → 管理画面の申請一覧に表示される
           await ensureUser(uid,email,company.id,{display_name:fullName.trim(),employee_id:employeeId.trim()});
         }
-        // セッションがあればサインアウト（メール確認前は自動ログインさせない）
         try{await signOut();}catch{}
         setSuccess("登録申請が完了しました。メールの確認リンクを押した後、管理者の承認をお待ちください。");
         setMode("login");setPass("");
@@ -76,8 +74,29 @@ function LoginScreen({onLogin}){
         if(!info){const s2=await getSession();if(s2?.user?.id)await ensureUser(s2.user.id,email,company.id);}
         onLogin();
       }
-    }catch(e){setErr(e.message);}
+    }catch(e){
+      const msg=e.message||"";
+      if(msg.toLowerCase().includes("email not confirmed")||msg.includes("メール未確認")){
+        setErr("メールアドレスの確認が完了していません。受信トレイ（迷惑メールフォルダ含む）を確認してください。");
+        setShowResend(true);
+      }else{
+        setErr(msg);
+        setShowResend(false);
+      }
+    }
     setLoading(false);
+  };
+
+  const handleResend=async()=>{
+    if(!email){setErr("メールアドレスを入力してください");return;}
+    setResending(true);setErr("");
+    try{
+      const{error}=await supabase.auth.resend({type:"signup",email});
+      if(error)throw error;
+      setSuccess("確認メールを再送しました。受信トレイを確認してください。");
+      setShowResend(false);
+    }catch(e){setErr("再送に失敗しました: "+e.message);}
+    setResending(false);
   };
 
   const IS={width:"100%",padding:"10px 12px",border:"2px solid #e2e8f0",borderRadius:10,fontSize:13,outline:"none",boxSizing:"border-box",marginBottom:8};
@@ -94,7 +113,7 @@ function LoginScreen({onLogin}){
         <input value={cc} onChange={e=>setCc(e.target.value)} placeholder="管理者から共有されたコード" autoComplete="organization" style={{...IS,fontSize:14,fontWeight:700,fontFamily:"monospace",letterSpacing:2,marginBottom:12}}/>
       </div>
       <div style={{display:"flex",gap:4,marginBottom:14,background:"#f1f5f9",borderRadius:10,padding:3}}>
-        {[{id:"login",label:"ログイン"},{id:"signup",label:"新規登録申請"}].map(m=><button key={m.id} onClick={()=>{setMode(m.id);setErr("");setSuccess("");}} style={{flex:1,padding:"6px",border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",background:mode===m.id?"#fff":"transparent",color:mode===m.id?"#0f172a":"#94a3b8"}}>{m.label}</button>)}
+        {[{id:"login",label:"ログイン"},{id:"signup",label:"新規登録申請"}].map(m=><button key={m.id} onClick={()=>{setMode(m.id);setErr("");setSuccess("");setShowResend(false);}} style={{flex:1,padding:"6px",border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",background:mode===m.id?"#fff":"transparent",color:mode===m.id?"#0f172a":"#94a3b8"}}>{m.label}</button>)}
       </div>
       {mode==="signup"&&<>
         <input value={fullName} onChange={e=>setFullName(e.target.value)} placeholder="氏名（フルネーム）" autoComplete="name" style={IS}/>
@@ -103,7 +122,10 @@ function LoginScreen({onLogin}){
       <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="メールアドレス" autoComplete="email" style={IS}/>
       <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="パスワード" autoComplete={mode==="login"?"current-password":"new-password"} onKeyDown={e=>e.key==="Enter"&&handle()} style={{...IS,marginBottom:12}}/>
       {success&&<div style={{fontSize:11,color:"#059669",marginBottom:8,padding:"8px 10px",background:"#ecfdf5",borderRadius:8,lineHeight:1.6}}>{success}</div>}
-      {err&&<div style={{fontSize:11,color:"#dc2626",marginBottom:8,padding:"6px 10px",background:"#fef2f2",borderRadius:8}}>{err}</div>}
+      {err&&<div style={{fontSize:11,color:"#dc2626",marginBottom:8,padding:"6px 10px",background:"#fef2f2",borderRadius:8,lineHeight:1.6}}>{err}</div>}
+      {showResend&&<button onClick={handleResend} disabled={resending} style={{width:"100%",padding:"8px",background:"#f0f9ff",color:"#2563eb",border:"1px solid #bfdbfe",borderRadius:10,fontSize:12,fontWeight:700,cursor:resending?"wait":"pointer",marginBottom:8,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+        {resending?<Loader2 size={14} style={{animation:"spin 1s linear infinite"}}/>:"📧 確認メールを再送する"}
+      </button>}
       <button onClick={handle} disabled={loading||!email||!pass||!cc.trim()} style={{width:"100%",padding:"10px",background:loading?"#94a3b8":"linear-gradient(135deg,#0d9488,#0f766e)",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:loading?"wait":"pointer"}}>
         {loading?<Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>:mode==="login"?"ログイン":"登録申請"}
       </button>
@@ -345,9 +367,20 @@ export default function App(){
   const[userInfo,setUserInfo]=useState(null);const[currentStore,setCurrentStore]=useState(null);const[apiKey,setApiKey]=useState("");
   const[showStorePicker,setShowStorePicker]=useState(false);
   const[deferredPrompt,setDeferredPrompt]=useState(null);const[showInstall,setShowInstall]=useState(false);
+  const[emailConfirmed,setEmailConfirmed]=useState(false);
   const recRef=useRef(null);const chunksRef=useRef([]);const timerRef=useRef(null);const streamRef=useRef(null);const analyserRef=useRef(null);const levelRef=useRef(null);const fileRef=useRef(null);
   const addProcLog=(msg,status)=>setProcLog(p=>[...p,{time:ts(),msg,status}]);
   const isAdmin=userInfo?.role==="super_admin"||userInfo?.role==="store_admin";
+
+  // メール確認コールバック検出
+  useEffect(()=>{
+    const hash=window.location.hash;
+    if(hash.includes("type=signup")||hash.includes("type=email")||hash.includes("access_token=")){
+      setEmailConfirmed(true);
+      // URLハッシュをクリーン（Supabase SDKがトークンを処理した後）
+      setTimeout(()=>{window.location.hash="";},500);
+    }
+  },[]);
 
   // Auth
   useEffect(()=>{getSession().then(s=>setSession(s));const{data}=onAuthChange(s=>setSession(s));return()=>data.subscription.unsubscribe();},[]);
@@ -399,6 +432,8 @@ export default function App(){
 
   // ルーティング
   if(session===undefined)return<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><Loader2 size={28} style={{animation:"spin 1s linear infinite",color:"#0d9488"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
+  // メール確認成功画面
+  if(emailConfirmed)return(<div style={{minHeight:"100vh",background:"linear-gradient(168deg,#f0fdfa 0%,#f0f9ff 40%,#fafbfc 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}><div style={{background:"#fff",borderRadius:20,padding:"32px 28px",width:"92%",maxWidth:380,boxShadow:"0 8px 32px rgba(0,0,0,.08)",textAlign:"center"}}><div style={{width:56,height:56,borderRadius:16,background:"linear-gradient(135deg,#059669,#047857)",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:14}}><Check size={28} color="#fff"/></div><div style={{fontSize:18,fontWeight:800,color:"#0f172a",marginBottom:8}}>メール認証が完了しました</div><div style={{fontSize:13,color:"#64748b",lineHeight:1.8,marginBottom:20}}>管理者の承認後にログインできます。<br/>承認されるまでしばらくお待ちください。</div><button onClick={async()=>{try{await signOut();}catch{}setEmailConfirmed(false);setSession(null);}} style={{width:"100%",padding:"10px",background:"linear-gradient(135deg,#0d9488,#0f766e)",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer"}}>ログイン画面へ</button></div><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>);
   if(!session)return<LoginScreen onLogin={()=>{}}/>;
   // super_admin: 管理画面専用モード（録音画面には行かない）
   if(page==="admin"){
