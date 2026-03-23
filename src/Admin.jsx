@@ -6,7 +6,7 @@ import {
   Building2, Users, Key, BarChart3, Plus, Trash2, Edit3, Save, X, 
   ArrowLeft, Shield, ShieldCheck, UserCheck, Loader2, RefreshCw,
   CheckCircle, XCircle, Copy, Eye, EyeOff, LogOut, ChevronDown, Check,
-  Settings, Search, ArrowUp, ArrowDown, FileText, AlertTriangle, Pill, Upload
+  Settings, Search, ArrowUp, ArrowDown, FileText, AlertTriangle, Pill, Upload, Bell, Activity
 } from "lucide-react";
 
 // === Styles ===
@@ -1751,6 +1751,240 @@ function DrugMasterPanel() {
   );
 }
 
+// === System Diagnostics (診断) ===
+function DiagPanel() {
+  const [log, setLog] = useState([]);
+  const [testing, setTesting] = useState(false);
+  const ts = () => new Date().toLocaleTimeString("ja-JP");
+  const addLog = (l, s, d) => setLog(p => [...p, { time: ts(), label: l, status: s, detail: d }]);
+
+  const runTests = async () => {
+    setTesting(true); setLog([]);
+    addLog("Version", "info", `Admin v5.6.0`);
+    addLog("Supabase", "testing", "接続テスト中...");
+    try {
+      const { data, error } = await supabase.from("records").select("id").limit(1);
+      addLog("Supabase", error ? "error" : "ok", error ? error.message : `接続OK`);
+    } catch (e) { addLog("Supabase", "error", e.message); }
+    addLog("SOAP API", "testing", "Vercel Function確認中...");
+    try {
+      const r = await fetch("/api/soap"); const d = await r.json();
+      addLog("SOAP API", d.status === "ok" ? "ok" : "error", `v${d.version} / Anthropic: ${d.anthropic_key_set ? "✅" : "❌"}`);
+    } catch (e) { addLog("SOAP API", "error", e.message); }
+    addLog("Admin API", "testing", "管理API確認中...");
+    try {
+      const r = await fetch("/api/admin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "ping" }) });
+      addLog("Admin API", r.status === 400 ? "ok" : "error", r.status === 400 ? "接続OK（認証なしで400は正常）" : `HTTP ${r.status}`);
+    } catch (e) { addLog("Admin API", "error", e.message); }
+    addLog("Notify API", "testing", "通知API確認中...");
+    try {
+      const r = await fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      addLog("Notify API", r.status === 400 ? "ok" : r.status === 500 ? "error" : "ok", r.status === 500 ? "SERVICE_ROLE_KEY未設定" : "接続OK");
+    } catch (e) { addLog("Notify API", "error", e.message); }
+    addLog("DB Stats", "testing", "統計取得中...");
+    try {
+      const [{ count: rc }, { count: uc }, { count: sc }, { count: cc }] = await Promise.all([
+        supabase.from("records").select("*", { count: "exact", head: true }),
+        supabase.from("users").select("*", { count: "exact", head: true }),
+        supabase.from("stores").select("*", { count: "exact", head: true }),
+        supabase.from("companies").select("*", { count: "exact", head: true }),
+      ]);
+      addLog("DB Stats", "ok", `レコード${rc || 0}件 / ユーザー${uc || 0}人 / 店舗${sc || 0}店 / 会社${cc || 0}社`);
+    } catch (e) { addLog("DB Stats", "error", e.message); }
+    addLog("完了", "ok", "全テスト完了");
+    setTesting(false);
+  };
+
+  const sc = s => s === "ok" ? "#059669" : s === "error" ? "#dc2626" : s === "info" ? "#2563eb" : "#94a3b8";
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+        <div style={{ background: "#f0fdfa", borderRadius: 10, padding: "10px 12px", border: "1px solid #ccfbf1" }}>
+          <div style={{ fontSize: 10, color: "#94a3b8" }}>音声認識</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#0d9488" }}>Groq Whisper v3 Turbo</div>
+        </div>
+        <div style={{ background: "#f5f3ff", borderRadius: 10, padding: "10px 12px", border: "1px solid #ede9fe" }}>
+          <div style={{ fontSize: 10, color: "#94a3b8" }}>SOAP分類</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#7c3aed" }}>Claude Haiku 4.5</div>
+        </div>
+      </div>
+      <button onClick={runTests} disabled={testing} style={{ ...S.btn("#0891b2"), width: "100%", justifyContent: "center", marginBottom: 12 }}>
+        {testing ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Activity size={14} />}
+        {testing ? "テスト中..." : "全接続テスト"}
+      </button>
+      {log.length > 0 && (
+        <div style={{ background: "#f8fafc", borderRadius: 10, padding: "10px 12px", border: "1px solid #e2e8f0" }}>
+          {log.map((l, i) => (
+            <div key={i} style={{ padding: "4px 0", borderBottom: "1px solid #f1f5f9", fontSize: 11, display: "flex", alignItems: "flex-start", gap: 6 }}>
+              <span style={{ color: "#94a3b8", minWidth: 52, flexShrink: 0, fontSize: 10 }}>{l.time}</span>
+              <span style={{ minWidth: 14, flexShrink: 0 }}>{l.status === "ok" ? "✅" : l.status === "error" ? "❌" : l.status === "info" ? "ℹ️" : "⏳"}</span>
+              <span style={{ color: sc(l.status), fontWeight: 700, minWidth: 72, flexShrink: 0 }}>{l.label}</span>
+              <span style={{ color: "#64748b", wordBreak: "break-all", flex: 1 }}>{l.detail}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// === Notification Settings (通知設定) ===
+function NotificationPanel({ companies }) {
+  const [settings, setSettings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ company_id:"", webhook_url:"", channel_name:"", notify_new_signup:true, notify_password_reset:true, notify_user_approved:true, notify_daily_stats:false });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [testMsg, setTestMsg] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase.from("notification_settings").select("*").order("created_at");
+    setSettings(data || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openEdit = (item) => {
+    if (item === "new") {
+      setForm({ company_id:"", webhook_url:"", channel_name:"", notify_new_signup:true, notify_password_reset:true, notify_user_approved:true, notify_daily_stats:false });
+    } else {
+      setForm({
+        company_id: item.company_id || "",
+        webhook_url: item.webhook_url || "",
+        channel_name: item.channel_name || "",
+        notify_new_signup: item.notify_new_signup ?? true,
+        notify_password_reset: item.notify_password_reset ?? true,
+        notify_user_approved: item.notify_user_approved ?? true,
+        notify_daily_stats: item.notify_daily_stats ?? false,
+      });
+    }
+    setEditing(item);
+    setErr("");
+  };
+
+  const handleSave = async () => {
+    if (!form.webhook_url.trim()) { setErr("Webhook URLを入力してください"); return; }
+    setSaving(true); setErr("");
+    try {
+      const row = { ...form, company_id: form.company_id || null, updated_at: new Date().toISOString() };
+      if (editing === "new") {
+        const { error } = await supabase.from("notification_settings").insert(row);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("notification_settings").update(row).eq("id", editing.id);
+        if (error) throw error;
+      }
+      setEditing(null); load();
+    } catch (e) { setErr(e.message); }
+    setSaving(false);
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm("この通知設定を削除しますか？")) return;
+    await supabase.from("notification_settings").delete().eq("id", id);
+    load();
+  };
+
+  const handleTest = async (setting) => {
+    setTestMsg("送信中...");
+    try {
+      const r = await fetch("/api/notify", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ event:"new_signup", company_id:setting.company_id, data:{user_name:"テストユーザー",email:"test@example.com",message:"🔔 これはテスト通知です"} }) });
+      const d = await r.json();
+      setTestMsg(r.ok ? `✅ 送信成功（${d.sent}件）` : `❌ ${d.error}`);
+    } catch (e) { setTestMsg("❌ " + e.message); }
+    setTimeout(() => setTestMsg(""), 5000);
+  };
+
+  if (loading) return <div style={{ textAlign:"center", padding:30 }}><Loader2 size={24} style={{ animation:"spin 1s linear infinite", color:"#94a3b8" }}/></div>;
+
+  const events = [
+    { key:"notify_new_signup", label:"新規登録申請", desc:"ユーザーが新規登録した時" },
+    { key:"notify_password_reset", label:"パスワードリセット依頼", desc:"ユーザーがPWリセットを依頼した時" },
+    { key:"notify_user_approved", label:"ユーザー承認", desc:"管理者がユーザーを承認した時" },
+    { key:"notify_daily_stats", label:"日次統計レポート", desc:"毎日の利用統計サマリー" },
+  ];
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+        <div style={{ fontSize:12, color:"#94a3b8" }}>設定数: {settings.length}</div>
+        <button onClick={() => openEdit("new")} style={S.btn()}><Plus size={14}/> 新規追加</button>
+      </div>
+      {testMsg && <div style={{ fontSize:12, fontWeight:600, color:testMsg.startsWith("✅")?"#059669":"#dc2626", marginBottom:10, padding:"6px 10px", background:testMsg.startsWith("✅")?"#ecfdf5":"#fef2f2", borderRadius:8 }}>{testMsg}</div>}
+
+      {settings.length === 0 ? <div style={S.empty}>通知設定がありません</div> : settings.map(s => {
+        const comp = companies?.find(c => c.id === s.company_id);
+        const activeEvents = events.filter(e => s[e.key]).map(e => e.label);
+        return (
+          <div key={s.id} style={{...S.card, opacity:s.is_active?1:0.5}}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <Bell size={18} color="#6366f1"/>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>{s.channel_name || "Slack通知"}</div>
+                <div style={{ fontSize:10, color:"#94a3b8" }}>
+                  {comp ? comp.name : "全社共通"} · {activeEvents.join(", ") || "通知なし"}
+                </div>
+              </div>
+              <button onClick={() => handleTest(s)} style={{...S.btnOutline, padding:"5px 8px", fontSize:10}}>テスト</button>
+              <button onClick={() => openEdit(s)} style={{...S.btnOutline, padding:"5px 8px"}}><Edit3 size={11}/></button>
+              <button onClick={() => handleDelete(s.id)} style={{...S.btnDanger, padding:"5px 8px"}}><Trash2 size={11}/></button>
+            </div>
+          </div>
+        );
+      })}
+
+      <div style={{ marginTop:12, fontSize:10, color:"#94a3b8", lineHeight:1.6, background:"#f8fafc", borderRadius:8, padding:"8px 12px" }}>
+        Slack Incoming Webhook URLの取得: Slack App設定 → Incoming Webhooks → Add New Webhook → チャンネル選択 → Webhook URLをコピー
+      </div>
+
+      {editing !== null && (
+        <div style={S.modal} onClick={() => setEditing(null)}>
+          <div style={{...S.modalBox, maxWidth:480}} onClick={e => e.stopPropagation()}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+              <div style={{ fontSize:16, fontWeight:800 }}>{editing === "new" ? "新規通知設定" : "通知設定を編集"}</div>
+              <button onClick={() => setEditing(null)} style={{ background:"none", border:"none", cursor:"pointer" }}><X size={20} color="#94a3b8"/></button>
+            </div>
+            {err && <div style={{ background:"#fef2f2", color:"#dc2626", padding:"8px 12px", borderRadius:8, fontSize:12, marginBottom:12 }}>{err}</div>}
+            <div style={{ marginBottom:10 }}>
+              <label style={S.label}>対象会社（空＝全社共通）</label>
+              <select value={form.company_id} onChange={e => setForm({...form, company_id:e.target.value})} style={S.input}>
+                <option value="">全社共通</option>
+                {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div style={{ marginBottom:10 }}>
+              <label style={S.label}>Slack Webhook URL *</label>
+              <input value={form.webhook_url} onChange={e => setForm({...form, webhook_url:e.target.value})} style={S.input} placeholder="https://hooks.slack.com/services/..."/>
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <label style={S.label}>チャンネル名（メモ用）</label>
+              <input value={form.channel_name} onChange={e => setForm({...form, channel_name:e.target.value})} style={S.input} placeholder="例: #pharmacy-alerts"/>
+            </div>
+            <div style={{ fontSize:13, fontWeight:800, color:"#0f172a", marginBottom:8 }}>通知イベント</div>
+            {events.map(ev => (
+              <label key={ev.key} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", cursor:"pointer" }}>
+                <input type="checkbox" checked={form[ev.key]} onChange={e => setForm({...form, [ev.key]:e.target.checked})} style={{ width:16, height:16 }}/>
+                <div><div style={{ fontSize:12, fontWeight:700, color:"#334155" }}>{ev.label}</div><div style={{ fontSize:10, color:"#94a3b8" }}>{ev.desc}</div></div>
+              </label>
+            ))}
+            <div style={{ display:"flex", gap:8, marginTop:16, justifyContent:"flex-end" }}>
+              <button onClick={() => setEditing(null)} style={S.btnOutline}>キャンセル</button>
+              <button onClick={handleSave} disabled={saving} style={S.btn()}>
+                {saving ? <Loader2 size={14} style={{ animation:"spin 1s linear infinite" }}/> : <Save size={14}/>}
+                {editing === "new" ? "作成" : "保存"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // === Company Management (会社管理) ===
 function CompanyPanel({ onRefresh }) {
   const [companies, setCompanies] = useState([]);
@@ -2097,6 +2331,8 @@ export default function Admin({ session, onBack }) {
     { id:"roles", label:"ロール", icon:Settings, roles:["super_admin"] },
     { id:"templates", label:"テンプレート", icon:FileText, roles:["super_admin"] },
     { id:"drugs", label:"医薬品", icon:Pill, roles:["super_admin"] },
+    { id:"notify", label:"通知", icon:Bell, roles:["super_admin"] },
+    { id:"diag", label:"診断", icon:Activity, roles:["super_admin"] },
   ];
   const tabs = allTabs.filter(t => t.roles.includes(userInfo.role));
 
@@ -2143,48 +2379,61 @@ export default function Admin({ session, onBack }) {
                 </button>
               )}
             </div>
-            {/* ★ 会社フィルター */}
-            {companiesList.length > 1 && (
-              <div style={{ marginBottom:12, display:"flex", alignItems:"center", gap:8 }}>
-                <Building2 size={14} color="#6366f1"/>
-                <span style={{ fontSize:11, fontWeight:700, color:"#475569" }}>会社で絞り込み:</span>
-                <select value={storeFilterCompany} onChange={e => setStoreFilterCompany(e.target.value)} style={{ flex:1, padding:"6px 10px", border:"2px solid #e2e8f0", borderRadius:8, fontSize:12, fontWeight:600, color:"#0f172a", outline:"none", cursor:"pointer" }}>
-                  <option value="all">すべての会社</option>
-                  {companiesList.map(c => <option key={c.id} value={c.id}>{c.name} ({c.company_code})</option>)}
-                </select>
-              </div>
-            )}
-            {(() => {
-              const filtered = storeFilterCompany === "all" ? stores : stores.filter(s => s.company_id === storeFilterCompany);
-              return filtered.length === 0 ? (
-              <div style={S.empty}>まだ店舗が登録されていません</div>
-            ) : (
-              filtered.map(s => (
-                <div key={s.id} style={S.card}>
-                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                    <Building2 size={20} color={s.is_active ? "#0d9488" : "#94a3b8"}/>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontSize:14, fontWeight:800, color:s.is_active ? "#0f172a" : "#94a3b8" }}>{s.name}</div>
-                      <div style={{ fontSize:11, color:"#94a3b8" }}>
-                        {s.name_kana && <span style={{ marginRight:8 }}>{s.name_kana}</span>}
-                        最大{s.max_users}名
-                        {!s.is_active && <span style={S.badge("#ef4444","#fef2f2")}> 無効</span>}
+            {stores.length === 0 ? <div style={S.empty}>まだ店舗が登録されていません</div> : (
+              (() => {
+                // 会社ごとにグループ化
+                const grouped = {};
+                stores.forEach(s => {
+                  const cid = s.company_id || "_none";
+                  if (!grouped[cid]) grouped[cid] = [];
+                  grouped[cid].push(s);
+                });
+                const companyIds = Object.keys(grouped).sort((a, b) => {
+                  if (a === "_none") return 1;
+                  if (b === "_none") return -1;
+                  const ca = companiesList.find(c => c.id === a)?.name || "";
+                  const cb = companiesList.find(c => c.id === b)?.name || "";
+                  return ca.localeCompare(cb);
+                });
+                return companyIds.map(cid => {
+                  const comp = companiesList.find(c => c.id === cid);
+                  const storeList = grouped[cid];
+                  return (
+                    <div key={cid} style={{ marginBottom:16 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8, padding:"6px 10px", background:"#f1f5f9", borderRadius:8 }}>
+                        <Building2 size={13} color="#6366f1"/>
+                        <span style={{ fontSize:12, fontWeight:800, color:"#334155" }}>{comp?.name || "未所属"}</span>
+                        {comp?.company_code && <span style={{ fontSize:10, color:"#94a3b8" }}>({comp.company_code})</span>}
+                        <span style={{ fontSize:10, color:"#94a3b8", marginLeft:"auto" }}>{storeList.length}店舗</span>
                       </div>
+                      {storeList.map(s => (
+                        <div key={s.id} style={{...S.card, marginLeft:8 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                            <Building2 size={18} color={s.is_active ? "#0d9488" : "#94a3b8"}/>
+                            <div style={{ flex:1 }}>
+                              <div style={{ fontSize:13, fontWeight:800, color:s.is_active ? "#0f172a" : "#94a3b8" }}>{s.name}</div>
+                              <div style={{ fontSize:10, color:"#94a3b8" }}>
+                                {s.name_kana && <span style={{ marginRight:8 }}>{s.name_kana}</span>}
+                                最大{s.max_users}名
+                                {!s.is_active && <span style={S.badge("#ef4444","#fef2f2")}> 無効</span>}
+                              </div>
+                            </div>
+                            <div style={{ display:"flex", gap:4 }}>
+                              <button onClick={() => setShowStoreForm(s)} style={{...S.btnOutline, padding:"5px 8px"}}><Edit3 size={11}/></button>
+                              <button onClick={() => handleToggleStore(s.id, s.is_active)} style={{...S.btnOutline, padding:"5px 8px"}}>
+                                {s.is_active ? <XCircle size={11} color="#ef4444"/> : <CheckCircle size={11} color="#059669"/>}
+                              </button>
+                              {isSuperAdmin && <button onClick={() => handleDeleteStore(s.id)} style={{...S.btnDanger, padding:"5px 8px"}}><Trash2 size={11}/></button>}
+                            </div>
+                          </div>
+                          {s.memo && <div style={{ fontSize:10, color:"#94a3b8", marginTop:4, paddingLeft:28 }}>{s.memo}</div>}
+                        </div>
+                      ))}
                     </div>
-                    <div style={{ display:"flex", gap:4 }}>
-                      <button onClick={() => setShowStoreForm(s)} style={{...S.btnOutline, padding:"6px 10px"}}><Edit3 size={12}/></button>
-                      <button onClick={() => handleToggleStore(s.id, s.is_active)} style={{...S.btnOutline, padding:"6px 10px"}}>
-                        {s.is_active ? <XCircle size={12} color="#ef4444"/> : <CheckCircle size={12} color="#059669"/>}
-                      </button>
-                      {isSuperAdmin && (
-                        <button onClick={() => handleDeleteStore(s.id)} style={{...S.btnDanger, padding:"6px 10px"}}><Trash2 size={12}/></button>
-                      )}
-                    </div>
-                  </div>
-                  {s.memo && <div style={{ fontSize:11, color:"#94a3b8", marginTop:6, paddingLeft:30 }}>{s.memo}</div>}
-                </div>
-              ))
-            )})()}
+                  );
+                });
+              })()
+            )}
           </div>
         )}
 
@@ -2197,23 +2446,12 @@ export default function Admin({ session, onBack }) {
                 <Plus size={14}/> ユーザー追加
               </button>
             </div>
-            {/* 検索・フィルタ */}
             <div style={{ marginBottom:14 }}>
               <div style={{ position:"relative", marginBottom:8 }}>
                 <Search size={14} color="#94a3b8" style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)" }}/>
                 <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="名前・メールで検索..." style={{...S.input, paddingLeft:32, fontSize:12 }}/>
               </div>
               <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                {companiesList.length > 0 && (
-                  <select value={userFilterCompany} onChange={e => { setUserFilterCompany(e.target.value); setUserFilterStore("all"); }} style={{ padding:"5px 8px", borderRadius:8, border:"1px solid #e2e8f0", fontSize:11, fontWeight:600, color:"#475569", cursor:"pointer", outline:"none" }}>
-                    <option value="all">全会社</option>
-                    {companiesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                )}
-                <select value={userFilterStore} onChange={e => setUserFilterStore(e.target.value)} style={{ padding:"5px 8px", borderRadius:8, border:"1px solid #e2e8f0", fontSize:11, fontWeight:600, color:"#475569", cursor:"pointer", outline:"none" }}>
-                  <option value="all">全店舗</option>
-                  {(userFilterCompany === "all" ? stores : stores.filter(st => st.company_id === userFilterCompany)).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
                 {rolesList.length > 0 && (
                   <select value={userFilterRole} onChange={e => setUserFilterRole(e.target.value)} style={{ padding:"5px 8px", borderRadius:8, border:"1px solid #e2e8f0", fontSize:11, fontWeight:600, color:"#475569", cursor:"pointer", outline:"none" }}>
                     <option value="all">全ロール</option>
@@ -2226,11 +2464,6 @@ export default function Admin({ session, onBack }) {
               const q = userSearch.trim().toLowerCase();
               const filtered = usersData.filter(u => {
                 if (q && !(u.display_name||"").toLowerCase().includes(q) && !(u.email||"").toLowerCase().includes(q) && !(u.employee_id||"").toLowerCase().includes(q)) return false;
-                if (userFilterCompany !== "all" && u.company_id !== userFilterCompany) return false;
-                if (userFilterStore !== "all") {
-                  const userStoreIds = (u.user_stores || []).map(us => us.store_id);
-                  if (!userStoreIds.includes(userFilterStore)) return false;
-                }
                 if (userFilterRole !== "all") {
                   if (u.role_id !== userFilterRole) {
                     const matchedRole = rolesList.find(r => r.id === userFilterRole);
@@ -2240,49 +2473,62 @@ export default function Admin({ session, onBack }) {
                 }
                 return true;
               });
+              if (filtered.length === 0) return <div style={S.empty}>{usersData.length===0?"ユーザーがいません":"条件に一致するユーザーがいません"}</div>;
+              // 会社ごとにグループ化
+              const grouped = {};
+              filtered.forEach(u => { const cid = u.company_id || "_none"; if (!grouped[cid]) grouped[cid] = []; grouped[cid].push(u); });
+              const cids = Object.keys(grouped).sort((a,b) => {
+                if (a==="_none") return 1; if (b==="_none") return -1;
+                return (companiesList.find(c=>c.id===a)?.name||"").localeCompare(companiesList.find(c=>c.id===b)?.name||"");
+              });
+              const myRoleObj = rolesList.find(r => r.id === userInfo.role_id);
+              const mySO = myRoleObj?.sort_order ?? (isSuperAdmin ? 0 : 99);
               return (
                 <>
-                  {q || userFilterCompany !== "all" || userFilterStore !== "all" || userFilterRole !== "all" ? (
-                    <div style={{ fontSize:11, color:"#94a3b8", marginBottom:8 }}>{filtered.length}件 / {usersData.length}件</div>
-                  ) : null}
-                  {filtered.length === 0 ? (
-                    <div style={S.empty}>{usersData.length === 0 ? "ユーザーがいません" : "条件に一致するユーザーがいません"}</div>
-                  ) : (
-                    filtered.map(u => {
-                      const userRole = rolesList.find(r => r.id === u.role_id);
-                      const roleName = userRole?.name || ROLE_LABELS[u.role] || u.role;
-                      const roleColor = userRole?.color || ROLE_COLORS[u.role]?.color || "#64748b";
-                      const roleBg = userRole ? `${userRole.color}18` : ROLE_COLORS[u.role]?.bg || "#f1f5f9";
-                      const storeNames = (u.user_stores || []).map(us => us.stores?.name).filter(Boolean);
-                      const myRoleObj = rolesList.find(r => r.id === userInfo.role_id);
-                      const mySO = myRoleObj?.sort_order ?? (isSuperAdmin ? 0 : 99);
-                      const uSO = userRole?.sort_order ?? (u.role === "super_admin" ? 0 : u.role === "store_admin" ? 1 : 99);
-                      const canEdit = mySO <= uSO;
-                      const canDelete = isSuperAdmin && u.id !== userInfo.id && uSO > 0;
-                      return (
-                        <div key={u.id} style={S.card}>
-                          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                            <div style={{ width:8, height:8, borderRadius:4, background:roleColor, flexShrink:0 }}/>
-                            <div style={{ flex:1, minWidth:0 }}>
-                              <div style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>{u.display_name || u.email}</div>
-                              <div style={{ fontSize:11, color:"#94a3b8", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                                {u.email}
-                                {u.employee_id && <span> / {u.employee_id}</span>}
-                                {storeNames.length > 0 && <span> — {storeNames.join(", ")}</span>}
+                  {(q || userFilterRole !== "all") && <div style={{ fontSize:11, color:"#94a3b8", marginBottom:8 }}>{filtered.length}件 / {usersData.length}件</div>}
+                  {cids.map(cid => {
+                    const comp = companiesList.find(c => c.id === cid);
+                    const users = grouped[cid];
+                    return (
+                      <div key={cid} style={{ marginBottom:16 }}>
+                        {cids.length > 1 && (
+                          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8, padding:"6px 10px", background:"#f1f5f9", borderRadius:8 }}>
+                            <Building2 size={13} color="#6366f1"/>
+                            <span style={{ fontSize:12, fontWeight:800, color:"#334155" }}>{comp?.name || "未所属"}</span>
+                            <span style={{ fontSize:10, color:"#94a3b8", marginLeft:"auto" }}>{users.length}名</span>
+                          </div>
+                        )}
+                        {users.map(u => {
+                          const userRole = rolesList.find(r => r.id === u.role_id);
+                          const roleName = userRole?.name || ROLE_LABELS[u.role] || u.role;
+                          const roleColor = userRole?.color || ROLE_COLORS[u.role]?.color || "#64748b";
+                          const roleBg = userRole ? `${userRole.color}18` : ROLE_COLORS[u.role]?.bg || "#f1f5f9";
+                          const storeNames = (u.user_stores || []).map(us => us.stores?.name).filter(Boolean);
+                          const uSO = userRole?.sort_order ?? (u.role === "super_admin" ? 0 : u.role === "store_admin" ? 1 : 99);
+                          const canEdit = mySO <= uSO;
+                          const canDelete = isSuperAdmin && u.id !== userInfo.id && uSO > 0;
+                          return (
+                            <div key={u.id} style={{...S.card, marginLeft: cids.length > 1 ? 8 : 0 }}>
+                              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                                <div style={{ width:8, height:8, borderRadius:4, background:roleColor, flexShrink:0 }}/>
+                                <div style={{ flex:1, minWidth:0 }}>
+                                  <div style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>{u.display_name || u.email}</div>
+                                  <div style={{ fontSize:10, color:"#94a3b8", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                                    {u.email}{u.employee_id && ` / ${u.employee_id}`}{storeNames.length > 0 && ` — ${storeNames.join(", ")}`}
+                                  </div>
+                                </div>
+                                {u.is_approved===false && <span style={S.badge("#d97706","#fffbeb")}>未承認</span>}
+                                {u.password_reset_requested && <span style={S.badge("#dc2626","#fef2f2")}>PW依頼</span>}
+                                <span style={S.badge(roleColor, roleBg)}>{roleName}</span>
+                                {canEdit && <button onClick={() => setShowUserEdit(u)} style={{...S.btnOutline, padding:"5px 8px"}}><Edit3 size={11}/></button>}
+                                {canDelete && <button onClick={() => handleDeleteUser(u.id)} style={{...S.btnDanger, padding:"5px 8px"}}><Trash2 size={11}/></button>}
                               </div>
                             </div>
-                            {u.is_approved===false && <span style={S.badge("#d97706","#fffbeb")}>未承認</span>}
-                            {u.password_reset_requested && <span style={S.badge("#dc2626","#fef2f2")}>PW依頼</span>}
-                            <span style={S.badge(roleColor, roleBg)}>{roleName}</span>
-                            {canEdit && <button onClick={() => setShowUserEdit(u)} style={{...S.btnOutline, padding:"6px 10px"}}><Edit3 size={12}/></button>}
-                            {canDelete && (
-                              <button onClick={() => handleDeleteUser(u.id)} style={{...S.btnDanger, padding:"6px 10px"}}><Trash2 size={12}/></button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
                 </>
               );
             })()}
@@ -2326,6 +2572,22 @@ export default function Admin({ session, onBack }) {
           <div style={S.card}>
             <div style={S.cardTitle}><Pill size={18} color="#6366f1"/> 医薬品マスタ管理</div>
             <DrugMasterPanel/>
+          </div>
+        )}
+
+        {/* ========== 通知設定 ========== */}
+        {tab === "notify" && (
+          <div style={S.card}>
+            <div style={S.cardTitle}><Bell size={18} color="#6366f1"/> Slack通知設定</div>
+            <NotificationPanel companies={companiesList}/>
+          </div>
+        )}
+
+        {/* ========== 診断 ========== */}
+        {tab === "diag" && (
+          <div style={S.card}>
+            <div style={S.cardTitle}><Activity size={18} color="#6366f1"/> システム診断</div>
+            <DiagPanel/>
           </div>
         )}
 
