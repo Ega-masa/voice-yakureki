@@ -1,19 +1,56 @@
-// voice-yakureki v5.2.0 api/soap.js
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+// voice-yakureki v5.5.0 api/soap.js — セキュリティ強化版
+import { createClient } from '@supabase/supabase-js'
+
+const ALLOWED_ORIGINS = [
+  'https://voice-yakureki.vercel.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
+];
+
+function setCors(req, res) {
+  const origin = req.headers?.origin || '';
+  // Chrome拡張からのリクエストも許可
+  if (ALLOWED_ORIGINS.includes(origin) || origin.startsWith('chrome-extension://')) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
+
+async function verifyAuth(req) {
+  const authHeader = req.headers?.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return null;
+  const token = authHeader.slice(7);
+  try {
+    const supabase = createClient(
+      process.env.SUPABASE_URL || 'https://lrtcrczgwxilukltetxa.supabase.co',
+      process.env.SUPABASE_ANON_KEY || '',
+    );
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data?.user) return null;
+    return data.user;
+  } catch { return null; }
+}
+
+export default async function handler(req, res) {
+  setCors(req, res);
 
   if (req.method === 'GET') {
     const hasKey = !!process.env.ANTHROPIC_API_KEY;
     return res.status(200).json({
-      status: 'ok', version: '5.2.0', file: 'api/soap.js',
+      status: 'ok', version: '5.5.0', file: 'api/soap.js',
       anthropic_key_set: hasKey,
       timestamp: new Date().toISOString()
     });
   }
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // 認証チェック
+  const user = await verifyAuth(req);
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthorized: valid session required' });
+  }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
@@ -73,7 +110,7 @@ export default async function handler(req, res) {
       soap = { raw: text, parseError: true };
     }
 
-    return res.status(200).json({ soap, version: '5.2.0' });
+    return res.status(200).json({ soap, version: '5.5.0' });
   } catch (e) {
     return res.status(500).json({ error: e.message, detail: 'Fetch failed' });
   }
