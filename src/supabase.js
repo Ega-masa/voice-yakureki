@@ -103,14 +103,28 @@ export async function linkUserToStore(userId, storeId, role = 'pharmacist') {
   if (error) throw error
 }
 
-// === API Keys ===
+// === API Keys (DB関数経由で安全に取得) ===
 export async function getApiKey(service, storeId) {
-  if (storeId) {
-    const { data } = await supabase.from('api_keys').select('api_key').eq('service', service).eq('store_id', storeId).eq('is_active', true).single()
-    if (data?.api_key) return data.api_key
+  try {
+    const { data, error } = await supabase.rpc('get_api_key', {
+      p_service: service,
+      p_store_id: storeId || null,
+    })
+    if (error) {
+      console.warn('getApiKey rpc error, falling back:', error.message)
+      // フォールバック: 直接SELECTを試す（admin権限がある場合）
+      if (storeId) {
+        const { data: d } = await supabase.from('api_keys').select('api_key').eq('service', service).eq('store_id', storeId).eq('is_active', true).single()
+        if (d?.api_key) return d.api_key
+      }
+      const { data: d2 } = await supabase.from('api_keys').select('api_key').eq('service', service).is('store_id', null).eq('is_active', true).single()
+      return d2?.api_key || ''
+    }
+    return data || ''
+  } catch (e) {
+    console.error('getApiKey error:', e)
+    return ''
   }
-  const { data } = await supabase.from('api_keys').select('api_key').eq('service', service).is('store_id', null).eq('is_active', true).single()
-  return data?.api_key || ''
 }
 
 // === Records ===
