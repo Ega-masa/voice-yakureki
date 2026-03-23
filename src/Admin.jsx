@@ -5,7 +5,8 @@ import { supabase } from "./supabase";
 import { 
   Building2, Users, Key, BarChart3, Plus, Trash2, Edit3, Save, X, 
   ArrowLeft, Shield, ShieldCheck, UserCheck, Loader2, RefreshCw,
-  CheckCircle, XCircle, Copy, Eye, EyeOff, LogOut, ChevronDown, Check
+  CheckCircle, XCircle, Copy, Eye, EyeOff, LogOut, ChevronDown, Check,
+  Settings
 } from "lucide-react";
 
 // === Styles ===
@@ -508,28 +509,47 @@ function UsageStats({ stores, companies }) {
   return (
     <div>
       {/* フィルター行 */}
-      <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:14 }}>
-        <div style={{ display:"flex", gap:4 }}>
+      <div style={{ marginBottom:14 }}>
+        <div style={{ display:"flex", gap:4, marginBottom:10 }}>
           {[{id:"1d",l:"今日"},{id:"7d",l:"7日間"},{id:"30d",l:"30日間"},{id:"90d",l:"90日間"}].map(p => (
             <PeriodBtn key={p.id} id={p.id} label={p.l}/>
           ))}
         </div>
-        {(companies||[]).length > 0 && (
-          <select value={filterCompany} onChange={e => { setFilterCompany(e.target.value); setFilterStore("all"); }} style={{
-            padding:"5px 8px", borderRadius:8, border:"1px solid #e2e8f0", fontSize:11, fontWeight:600, color:"#475569", cursor:"pointer", outline:"none"
-          }}>
-            <option value="all">全社</option>
-            {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        )}
-        {filteredStores.length > 0 && (
-          <select value={filterStore} onChange={e => setFilterStore(e.target.value)} style={{
-            padding:"5px 8px", borderRadius:8, border:"1px solid #e2e8f0", fontSize:11, fontWeight:600, color:"#475569", cursor:"pointer", outline:"none"
-          }}>
-            <option value="all">全店舗</option>
-            {filteredStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        )}
+        <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+          {(companies||[]).length > 0 && (
+            <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+              <Building2 size={13} color="#6366f1"/>
+              <select value={filterCompany} onChange={e => { setFilterCompany(e.target.value); setFilterStore("all"); }} style={{
+                padding:"6px 10px", borderRadius:8, border:"2px solid #e2e8f0", fontSize:12, fontWeight:700, color:"#0f172a", cursor:"pointer", outline:"none", background:"#fff", minWidth:100
+              }}>
+                {(companies||[]).length > 1 && <option value="all">全社</option>}
+                {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          )}
+          {filterCompany !== "all" && filteredStores.length > 0 && (
+            <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+              <span style={{ fontSize:11, color:"#94a3b8" }}>›</span>
+              <select value={filterStore} onChange={e => setFilterStore(e.target.value)} style={{
+                padding:"6px 10px", borderRadius:8, border:"2px solid #e2e8f0", fontSize:12, fontWeight:700, color:"#0f172a", cursor:"pointer", outline:"none", background:"#fff", minWidth:120
+              }}>
+                <option value="all">全店舗（{filteredStores.length}店の合計）</option>
+                {filteredStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          )}
+          {filterCompany === "all" && stores.length > 0 && (
+            <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+              <span style={{ fontSize:11, color:"#94a3b8" }}>›</span>
+              <select value={filterStore} onChange={e => setFilterStore(e.target.value)} style={{
+                padding:"6px 10px", borderRadius:8, border:"2px solid #e2e8f0", fontSize:12, fontWeight:700, color:"#0f172a", cursor:"pointer", outline:"none", background:"#fff", minWidth:120
+              }}>
+                <option value="all">全店舗</option>
+                {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* サマリーカード */}
@@ -735,6 +755,283 @@ function UsageStats({ stores, companies }) {
               </div>
             ) : null;
           })()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// === Role Management (ロール管理) Phase B ===
+const PERM_CATEGORIES = {
+  recording: { label: "録音", color: "#059669", icon: "🎙️" },
+  admin:     { label: "管理", color: "#6366f1", icon: "⚙️" },
+  general:   { label: "一般", color: "#64748b", icon: "📋" },
+};
+
+function RolePanel({ onRefresh }) {
+  const [roles, setRoles] = useState([]);
+  const [permissions, setPermissions] = useState([]);
+  const [rolePerms, setRolePerms] = useState({}); // { roleId: [permId, ...] }
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null); // null | "new" | role object
+  const [form, setForm] = useState({ name: "", description: "", color: "#6366f1" });
+  const [formPerms, setFormPerms] = useState([]); // permission ids
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [{ data: rData }, { data: pData }, { data: rpData }] = await Promise.all([
+        supabase.from("roles").select("*").order("sort_order").order("created_at"),
+        supabase.from("permissions").select("*").order("sort_order"),
+        supabase.from("role_permissions").select("role_id, permission_id"),
+      ]);
+      setRoles(rData || []);
+      setPermissions(pData || []);
+      const map = {};
+      (rpData || []).forEach(rp => {
+        if (!map[rp.role_id]) map[rp.role_id] = [];
+        map[rp.role_id].push(rp.permission_id);
+      });
+      setRolePerms(map);
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openEdit = (role) => {
+    if (role === "new") {
+      setForm({ name: "", description: "", color: "#6366f1" });
+      setFormPerms([]);
+    } else {
+      setForm({ name: role.name, description: role.description || "", color: role.color || "#6366f1" });
+      setFormPerms(rolePerms[role.id] || []);
+    }
+    setEditing(role);
+    setErr("");
+  };
+
+  const togglePerm = (pid) => {
+    setFormPerms(prev => prev.includes(pid) ? prev.filter(p => p !== pid) : [...prev, pid]);
+  };
+
+  const toggleCategory = (cat) => {
+    const catPerms = permissions.filter(p => p.category === cat).map(p => p.id);
+    const allChecked = catPerms.every(p => formPerms.includes(p));
+    if (allChecked) {
+      setFormPerms(prev => prev.filter(p => !catPerms.includes(p)));
+    } else {
+      setFormPerms(prev => [...new Set([...prev, ...catPerms])]);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { setErr("ロール名を入力してください"); return; }
+    setSaving(true);
+    setErr("");
+    try {
+      let roleId;
+      if (editing === "new") {
+        const maxOrder = Math.max(...roles.map(r => r.sort_order || 0), 0);
+        const { data, error } = await supabase.from("roles").insert({
+          name: form.name.trim(),
+          description: form.description.trim(),
+          color: form.color,
+          is_system: false,
+          sort_order: maxOrder + 1,
+        }).select().single();
+        if (error) throw error;
+        roleId = data.id;
+      } else {
+        const { error } = await supabase.from("roles").update({
+          name: form.name.trim(),
+          description: form.description.trim(),
+          color: form.color,
+          updated_at: new Date().toISOString(),
+        }).eq("id", editing.id);
+        if (error) throw error;
+        roleId = editing.id;
+        // 既存の権限を削除
+        await supabase.from("role_permissions").delete().eq("role_id", roleId);
+      }
+      // 権限を挿入
+      if (formPerms.length > 0) {
+        const rows = formPerms.map(pid => ({ role_id: roleId, permission_id: pid }));
+        const { error: rpErr } = await supabase.from("role_permissions").insert(rows);
+        if (rpErr) throw rpErr;
+      }
+      setEditing(null);
+      load();
+      onRefresh?.();
+    } catch (e) { setErr(e.message); }
+    setSaving(false);
+  };
+
+  const handleDelete = async (role) => {
+    if (role.is_system) return;
+    if (!confirm(`ロール「${role.name}」を削除しますか？\nこのロールが割り当てられているユーザーのロールは解除されます。`)) return;
+    try {
+      await supabase.from("users").update({ role_id: null }).eq("role_id", role.id);
+      await supabase.from("role_permissions").delete().eq("role_id", role.id);
+      await supabase.from("roles").delete().eq("id", role.id);
+      load();
+      onRefresh?.();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleToggleActive = async (role) => {
+    if (role.is_system) return;
+    await supabase.from("roles").update({ is_active: !role.is_active }).eq("id", role.id);
+    load();
+  };
+
+  // 権限をカテゴリでグループ化
+  const permsByCategory = {};
+  permissions.forEach(p => {
+    if (!permsByCategory[p.category]) permsByCategory[p.category] = [];
+    permsByCategory[p.category].push(p);
+  });
+
+  if (loading) return <div style={{ textAlign:"center", padding:30 }}><Loader2 size={24} style={{ animation:"spin 1s linear infinite", color:"#94a3b8" }}/></div>;
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+        <div style={{ fontSize:12, color:"#94a3b8" }}>ロール数: {roles.length}</div>
+        <button onClick={() => openEdit("new")} style={S.btn()}>
+          <Plus size={14}/> 新規ロール
+        </button>
+      </div>
+
+      {/* ロール一覧 */}
+      {roles.map(role => {
+        const perms = (rolePerms[role.id] || []).map(pid => permissions.find(p => p.id === pid)).filter(Boolean);
+        return (
+          <div key={role.id} style={{...S.card, opacity: role.is_active ? 1 : 0.5 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:perms.length > 0 ? 10 : 0 }}>
+              <div style={{ width:8, height:8, borderRadius:4, background:role.color || "#6366f1", flexShrink:0 }}/>
+              <div style={{ flex:1 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <span style={{ fontSize:14, fontWeight:800, color:"#0f172a" }}>{role.name}</span>
+                  {role.is_system && <span style={S.badge("#7c3aed","#f3e8ff")}>システム</span>}
+                  {!role.is_active && <span style={S.badge("#ef4444","#fef2f2")}>無効</span>}
+                </div>
+                {role.description && <div style={{ fontSize:11, color:"#94a3b8", marginTop:2 }}>{role.description}</div>}
+              </div>
+              <div style={{ display:"flex", gap:4 }}>
+                <button onClick={() => openEdit(role)} style={{...S.btnOutline, padding:"6px 10px"}}><Edit3 size={12}/></button>
+                {!role.is_system && (
+                  <>
+                    <button onClick={() => handleToggleActive(role)} style={{...S.btnOutline, padding:"6px 10px"}}>
+                      {role.is_active ? <XCircle size={12} color="#ef4444"/> : <CheckCircle size={12} color="#059669"/>}
+                    </button>
+                    <button onClick={() => handleDelete(role)} style={{...S.btnDanger, padding:"6px 10px"}}><Trash2 size={12}/></button>
+                  </>
+                )}
+              </div>
+            </div>
+            {/* 権限バッジ */}
+            {perms.length > 0 && (
+              <div style={{ display:"flex", flexWrap:"wrap", gap:4, paddingLeft:18 }}>
+                {perms.map(p => {
+                  const cat = PERM_CATEGORIES[p.category] || PERM_CATEGORIES.general;
+                  return (
+                    <span key={p.id} style={{ fontSize:10, fontWeight:600, color:cat.color, background:`${cat.color}12`, padding:"2px 7px", borderRadius:5, border:`1px solid ${cat.color}30` }}>
+                      {p.label}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {roles.length === 0 && <div style={S.empty}>ロールがありません</div>}
+
+      {/* ロール編集モーダル */}
+      {editing !== null && (
+        <div style={S.modal} onClick={() => setEditing(null)}>
+          <div style={{...S.modalBox, maxWidth:560 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+              <div style={{ fontSize:16, fontWeight:800, color:"#0f172a" }}>
+                {editing === "new" ? "新規ロール作成" : `${editing.name} を編集`}
+              </div>
+              <button onClick={() => setEditing(null)} style={{ background:"none", border:"none", cursor:"pointer" }}><X size={20} color="#94a3b8"/></button>
+            </div>
+
+            {err && <div style={{ background:"#fef2f2", color:"#dc2626", padding:"8px 12px", borderRadius:8, fontSize:12, marginBottom:12 }}>{err}</div>}
+
+            <div style={{ marginBottom:12 }}>
+              <label style={S.label}>ロール名 *</label>
+              <input value={form.name} onChange={e => setForm({...form, name: e.target.value})} style={S.input} placeholder="例: エリアマネージャー" disabled={editing !== "new" && editing?.is_system}/>
+            </div>
+            <div style={{ marginBottom:12 }}>
+              <label style={S.label}>説明</label>
+              <input value={form.description} onChange={e => setForm({...form, description: e.target.value})} style={S.input} placeholder="このロールの説明"/>
+            </div>
+            <div style={{ marginBottom:16 }}>
+              <label style={S.label}>バッジカラー</label>
+              <div style={{ display:"flex", gap:6 }}>
+                {["#6366f1","#7c3aed","#0d9488","#2563eb","#d97706","#db2777","#059669","#dc2626","#475569"].map(c => (
+                  <button key={c} onClick={() => setForm({...form, color: c})} style={{
+                    width:28, height:28, borderRadius:8, background:c, border: form.color === c ? "3px solid #0f172a" : "2px solid transparent", cursor:"pointer"
+                  }}/>
+                ))}
+              </div>
+            </div>
+
+            {/* 権限設定 */}
+            <div style={{ fontSize:13, fontWeight:800, color:"#0f172a", marginBottom:10 }}>権限設定</div>
+            {Object.entries(permsByCategory).map(([cat, perms]) => {
+              const catMeta = PERM_CATEGORIES[cat] || PERM_CATEGORIES.general;
+              const allChecked = perms.every(p => formPerms.includes(p.id));
+              const someChecked = perms.some(p => formPerms.includes(p.id));
+              return (
+                <div key={cat} style={{ marginBottom:14, background:"#f8fafc", borderRadius:10, padding:"10px 12px" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8, cursor:"pointer" }} onClick={() => toggleCategory(cat)}>
+                    <div style={{
+                      width:16, height:16, borderRadius:4, border:`2px solid ${allChecked ? catMeta.color : "#cbd5e1"}`,
+                      background: allChecked ? catMeta.color : someChecked ? `${catMeta.color}40` : "#fff",
+                      display:"flex", alignItems:"center", justifyContent:"center"
+                    }}>
+                      {(allChecked || someChecked) && <Check size={10} color="#fff"/>}
+                    </div>
+                    <span style={{ fontSize:12, fontWeight:800, color:catMeta.color }}>{catMeta.icon} {catMeta.label}</span>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, paddingLeft:22 }}>
+                    {perms.map(p => {
+                      const checked = formPerms.includes(p.id);
+                      return (
+                        <label key={p.id} style={{ display:"flex", alignItems:"flex-start", gap:6, cursor:"pointer", padding:"4px 0" }}>
+                          <div style={{
+                            width:15, height:15, borderRadius:4, border:`2px solid ${checked ? catMeta.color : "#cbd5e1"}`,
+                            background: checked ? catMeta.color : "#fff", display:"flex", alignItems:"center", justifyContent:"center",
+                            flexShrink:0, marginTop:1
+                          }} onClick={() => togglePerm(p.id)}>
+                            {checked && <Check size={9} color="#fff"/>}
+                          </div>
+                          <div onClick={() => togglePerm(p.id)}>
+                            <div style={{ fontSize:11, fontWeight:700, color:"#334155" }}>{p.label}</div>
+                            <div style={{ fontSize:9, color:"#94a3b8" }}>{p.description}</div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+
+            <div style={{ display:"flex", gap:8, marginTop:16, justifyContent:"flex-end" }}>
+              <button onClick={() => setEditing(null)} style={S.btnOutline}>キャンセル</button>
+              <button onClick={handleSave} disabled={saving} style={S.btn()}>
+                {saving ? <Loader2 size={14} style={{ animation:"spin 1s linear infinite" }}/> : <Save size={14}/>}
+                {editing === "new" ? "作成" : "保存"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -1038,6 +1335,7 @@ export default function Admin({ session, onBack }) {
     { id:"users", label:"ユーザー", icon:Users },
     { id:"apikeys", label:"API設定", icon:Key },
     { id:"stats", label:"統計", icon:BarChart3 },
+    { id:"roles", label:"ロール", icon:Settings },
   ];
 
   return (
@@ -1183,6 +1481,14 @@ export default function Admin({ session, onBack }) {
           <div style={S.card}>
             <div style={S.cardTitle}><BarChart3 size={18} color="#6366f1"/> 使用統計</div>
             <UsageStats stores={stores} companies={companiesList}/>
+          </div>
+        )}
+
+        {/* ========== ロール管理 ========== */}
+        {tab === "roles" && (
+          <div style={S.card}>
+            <div style={S.cardTitle}><Settings size={18} color="#6366f1"/> ロール管理</div>
+            <RolePanel onRefresh={loadData}/>
           </div>
         )}
 
