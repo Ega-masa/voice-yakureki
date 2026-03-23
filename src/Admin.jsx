@@ -209,7 +209,7 @@ function UserAddModal({ stores, roles, onClose, onSave }) {
 }
 
 // === User Edit Modal ===
-function UserEditModal({ user, stores, roles, onClose, onSave }) {
+function UserEditModal({ user, stores, roles, companies, onClose, onSave }) {
   const [form, setForm] = useState({
     display_name: user.display_name || "",
     employee_id: user.employee_id || "",
@@ -228,6 +228,11 @@ function UserEditModal({ user, stores, roles, onClose, onSave }) {
       if (matched) setForm(p => ({...p, role_id: matched.id}));
     }
   }, [roles, user.role]);
+
+  // ユーザーの会社に属する店舗のみ表示
+  const userCompanyId = user.company_id;
+  const filteredStores = userCompanyId ? stores.filter(s => s.company_id === userCompanyId) : stores;
+  const companyName = companies?.find(c => c.id === userCompanyId)?.name;
 
   const handleSave = async () => {
     setSaving(true); setErr("");
@@ -260,7 +265,9 @@ function UserEditModal({ user, stores, roles, onClose, onSave }) {
           <h3 style={{ margin:0, fontSize:16, fontWeight:800 }}>ユーザーを編集</h3>
           <button onClick={onClose} style={{ background:"#f1f5f9", border:"none", borderRadius:8, width:30, height:30, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}><X size={15} color="#64748b"/></button>
         </div>
-        <div style={{ fontSize:12, color:"#64748b", marginBottom:12, padding:"6px 10px", background:"#f8fafc", borderRadius:8 }}>{user.email}</div>
+        <div style={{ fontSize:12, color:"#64748b", marginBottom:12, padding:"6px 10px", background:"#f8fafc", borderRadius:8 }}>
+          {user.email}{companyName && <span style={{ marginLeft:8, fontSize:10, color:"#0d9488", fontWeight:700 }}>({companyName})</span>}
+        </div>
         <div style={{ marginBottom:10 }}>
           <label style={S.label}>氏名</label>
           <input style={S.input} value={form.display_name} onChange={e => setForm(p => ({...p, display_name: e.target.value}))} placeholder="氏名" />
@@ -279,10 +286,10 @@ function UserEditModal({ user, stores, roles, onClose, onSave }) {
           </select>
         </div>
         <div style={{ marginBottom:10 }}>
-          <label style={S.label}>所属店舗</label>
+          <label style={S.label}>所属店舗{companyName && <span style={{ fontWeight:400, color:"#94a3b8" }}>（{companyName}内）</span>}</label>
           <select style={S.input} value={form.store_id} onChange={e => setForm(p => ({...p, store_id: e.target.value}))}>
             <option value="">未所属</option>
-            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {filteredStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </div>
         <div style={{ marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>
@@ -2227,6 +2234,7 @@ export default function Admin({ session, onBack }) {
           user={showUserEdit}
           stores={stores}
           roles={rolesList}
+          companies={companiesList}
           onClose={() => setShowUserEdit(null)}
           onSave={() => { setShowUserEdit(null); loadData(); }}
         />
