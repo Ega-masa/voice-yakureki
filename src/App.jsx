@@ -353,13 +353,26 @@ export default function App(){
   useEffect(()=>{getSession().then(s=>setSession(s));const{data}=onAuthChange(s=>setSession(s));return()=>data.subscription.unsubscribe();},[]);
   // User info + store restore
   useEffect(()=>{if(!session?.user?.email)return;(async()=>{
-    const info=await getUserInfo(session.user.email);setUserInfo(info);
-    try{const lastId=localStorage.getItem(STORE_KEY);if(lastId){const{data:s}=await supabase.from("stores").select("id,name,name_kana").eq("id",lastId).single();if(s){setCurrentStore(s);return;}}}catch{}
-    if(info?.user_stores?.[0]?.stores){setCurrentStore(info.user_stores[0].stores);}
-    else{setShowStorePicker(true);}
+    try{
+      const info=await getUserInfo(session.user.email);
+      setUserInfo(info);
+      // super_adminは管理画面へ直行（店舗選択不要）
+      if(info?.role==="super_admin"){
+        setPage("admin");
+        return;
+      }
+      try{const lastId=localStorage.getItem(STORE_KEY);if(lastId){const{data:s}=await supabase.from("stores").select("id,name,name_kana").eq("id",lastId).single();if(s){setCurrentStore(s);return;}}}catch{}
+      if(info?.user_stores?.[0]?.stores){setCurrentStore(info.user_stores[0].stores);}
+      else{setShowStorePicker(true);}
+    }catch(e){
+      console.error("User init error:",e);
+      // RLSエラー等でuserInfoが取れない場合にフォールバック
+      setUserInfo({email:session.user.email,role:"pharmacist",is_approved:true,_loadError:true});
+      setShowStorePicker(true);
+    }
   })();},[session]);
   // API key from DB
-  useEffect(()=>{if(!currentStore)return;(async()=>{const key=await getApiKey("groq",currentStore.id);setApiKey(key);})();},[currentStore]);
+  useEffect(()=>{if(!currentStore)return;(async()=>{try{const key=await getApiKey("groq",currentStore.id);setApiKey(key);}catch(e){console.error("API key load error:",e);}})();},[currentStore]);
   // Hash routing
   useEffect(()=>{const h=()=>setPage(window.location.hash==="#admin"?"admin":"app");window.addEventListener("hashchange",h);return()=>window.removeEventListener("hashchange",h);},[]);
   // Timer
@@ -387,9 +400,13 @@ export default function App(){
   // ルーティング
   if(session===undefined)return<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><Loader2 size={28} style={{animation:"spin 1s linear infinite",color:"#0d9488"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
   if(!session)return<LoginScreen onLogin={()=>{}}/>;
-  if(page==="admin")return<Admin session={session} onBack={()=>{window.location.hash="";setPage("app");}}/>;
+  // super_admin: 管理画面専用モード（録音画面には行かない）
+  if(page==="admin"){
+    const isSuperAdminOnly = userInfo?.role === "super_admin";
+    return<Admin session={session} onBack={isSuperAdminOnly ? async()=>{await signOut();setUserInfo(null);setCurrentStore(null);setPage("app");} : ()=>{window.location.hash="";setPage("app");}}/>;
+  }
   if(showStorePicker)return<StorePicker companyId={userInfo?.company_id} currentStore={currentStore} onSelect={handleStoreSelect} onCancel={currentStore?()=>setShowStorePicker(false):null}/>;
-  if(!userInfo)return<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><Loader2 size={28} style={{animation:"spin 1s linear infinite",color:"#0d9488"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
+  if(!userInfo)return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}><Loader2 size={28} style={{animation:"spin 1s linear infinite",color:"#0d9488"}}/><div style={{fontSize:12,color:"#94a3b8",fontFamily:"sans-serif"}}>読み込み中...</div><button onClick={async()=>{await signOut();setSession(null);setUserInfo(null);}} style={{marginTop:16,padding:"8px 20px",background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer"}}>ログアウト</button><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
   // ★ 未承認ユーザーはブロック画面を表示
   if(userInfo.is_approved===false)return(<div style={{minHeight:"100vh",background:"linear-gradient(168deg,#f0fdfa 0%,#f0f9ff 40%,#fafbfc 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}><div style={{background:"#fff",borderRadius:20,padding:"32px 28px",width:"92%",maxWidth:380,boxShadow:"0 8px 32px rgba(0,0,0,.08)",textAlign:"center"}}><div style={{width:48,height:48,borderRadius:14,background:"#fef3c7",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:12,fontSize:22}}>⏳</div><div style={{fontSize:16,fontWeight:800,color:"#0f172a",marginBottom:8}}>承認待ち</div><div style={{fontSize:13,color:"#64748b",lineHeight:1.8,marginBottom:16}}>アカウントはまだ管理者に承認されていません。<br/>承認後にログインできます。</div><div style={{fontSize:11,color:"#94a3b8",marginBottom:16}}>{session.user.email}</div><button onClick={async()=>{await signOut();setUserInfo(null);setCurrentStore(null);}} style={{width:"100%",padding:"10px",background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer"}}>ログアウト</button></div></div>);
 
