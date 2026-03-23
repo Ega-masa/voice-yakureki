@@ -1,10 +1,10 @@
-// voice-yakureki v5.3.0 App.jsx — 全機能統合版
+// voice-yakureki v5.5.0 App.jsx — 全機能統合版 + テンプレート/チェック連携
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Mic, Square, Loader2, X, RotateCcw, Upload, FileAudio, List, ArrowLeft, Trash2, Clock, Check, Sparkles, ChevronDown, Activity, LogOut, User, Shield, Building2, Download, Search } from "lucide-react";
 import { saveRecord, getRecords, updateRecord, deleteRecord, testConnection as testSupabase, SUPABASE_VERSION, signIn, signUp, signOut, getSession, onAuthChange, supabase, getUserInfo, getApiKey, logUsage, findCompanyByCode, searchStores, linkUserToStore, ensureUser } from "./supabase";
 import Admin from "./Admin.jsx";
 
-const APP_VERSION = "5.3.0";
+const APP_VERSION = "5.5.0";
 const ST = { IDLE:"idle", REC:"rec", PROCESSING:"processing" };
 const ACCEPT = ".mp3,.wav,.webm,.ogg,.m4a,.aac,.flac,.mp4,.mpeg,.mpga";
 const CC_KEY = "vy-company-code";
@@ -154,7 +154,7 @@ function StorePicker({companyId,currentStore,onSelect,onCancel}){
 // 小コンポーネント
 // ======================================
 function Wave({active,level}){return(<div style={{display:"flex",alignItems:"center",gap:2,height:48,justifyContent:"center"}}>{Array.from({length:36}).map((_,i)=>{const h=active?8+(level||.3)*40+Math.sin(Date.now()/200+i)*8:4;return<div key={i} style={{width:2.5,borderRadius:2,background:active?`hsl(${165+i*2},60%,${40+Math.sin(i*.4)*12}%)`:"#d1d5db",height:`${Math.max(4,h)}px`,transition:active?"height 0.1s":"height 0.4s"}}/>;})}</div>);}
-function TemplatePicker({soapKey,onInsert}){const[open,setOpen]=useState(false);const templates=TEMPLATES[soapKey];if(!templates)return null;return(<div style={{position:"relative"}}><button onClick={()=>setOpen(!open)} style={{background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:6,padding:"2px 6px",fontSize:9,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:2}}><ChevronDown size={10}/>定型文</button>{open&&<div style={{position:"absolute",top:24,right:0,background:"#fff",border:"1px solid #e2e8f0",borderRadius:8,boxShadow:"0 4px 12px rgba(0,0,0,.1)",zIndex:20,minWidth:180,padding:4}}>{templates.map((t,i)=><div key={i} onClick={()=>{onInsert(t);setOpen(false);}} style={{padding:"6px 10px",fontSize:11,color:"#334155",cursor:"pointer",borderRadius:4}} onMouseEnter={e=>e.target.style.background="#f0fdfa"} onMouseLeave={e=>e.target.style.background="transparent"}>{t}</div>)}</div>}</div>);}
+function TemplatePicker({soapKey,onInsert,dbTemplates}){const[open,setOpen]=useState(false);const hardcoded=TEMPLATES[soapKey]||[];const dbItems=(dbTemplates||[]).map(t=>t[soapKey]).filter(Boolean);const all=[...dbItems,...hardcoded.filter(h=>!dbItems.includes(h))];if(all.length===0)return null;return(<div style={{position:"relative"}}><button onClick={()=>setOpen(!open)} style={{background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:6,padding:"2px 6px",fontSize:9,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:2}}><ChevronDown size={10}/>定型文</button>{open&&<div style={{position:"absolute",top:24,right:0,background:"#fff",border:"1px solid #e2e8f0",borderRadius:8,boxShadow:"0 4px 12px rgba(0,0,0,.1)",zIndex:20,minWidth:200,maxHeight:200,overflow:"auto",padding:4}}>{all.map((t,i)=><div key={i} onClick={()=>{onInsert(t);setOpen(false);}} style={{padding:"6px 10px",fontSize:11,color:"#334155",cursor:"pointer",borderRadius:4,whiteSpace:"pre-wrap",lineHeight:1.5}} onMouseEnter={e=>e.target.style.background="#f0fdfa"} onMouseLeave={e=>e.target.style.background="transparent"}>{t.length>60?t.slice(0,60)+"…":t}</div>)}</div>}</div>);}
 function ProcessLog({logs}){if(logs.length===0)return null;return(<div style={{background:"#f8fafc",borderRadius:10,padding:"10px 12px",marginBottom:12,border:"1px solid #e2e8f0"}}><div style={{fontSize:10,fontWeight:700,color:"#94a3b8",marginBottom:4}}>処理ログ</div>{logs.map((l,i)=><div key={i} style={{fontSize:11,padding:"2px 0",color:l.status==="error"?"#dc2626":l.status==="ok"?"#059669":"#475569"}}><span style={{color:"#94a3b8",marginRight:4}}>{l.time}</span>{l.status==="ok"?"✅":l.status==="error"?"❌":"⏳"} {l.msg}</div>)}</div>);}
 function DiagPanel({onClose,currentStore,apiKey}){
   const[log,setLog]=useState([]);const[testing,setTesting]=useState(false);
@@ -212,11 +212,68 @@ function DiagPanel({onClose,currentStore,apiKey}){
 // ======================================
 // レコード詳細（SOAP編集）
 // ======================================
-function RecordDetail({record,onBack,onUpdate,onDelete,initialSoap}){
+function RecordDetail({record,onBack,onUpdate,onDelete,initialSoap,storeId,companyId}){
   const[soap,setSoap]=useState(()=>{const b=Object.fromEntries(SOAP_KEYS.map(s=>[s.key,record[s.key]||""]));if(initialSoap){for(const sk of SOAP_KEYS){if(sk.apiKey&&initialSoap[sk.apiKey]&&!b[sk.key])b[sk.key]=initialSoap[sk.apiKey];}}return b;});
   const[saving,setSaving]=useState(false);const[msg,setMsg]=useState("");
+  const[dbTemplates,setDbTemplates]=useState([]);const[checkRules,setCheckRules]=useState([]);
+  const[showTplPicker,setShowTplPicker]=useState(false);const[checkWarnings,setCheckWarnings]=useState([]);
+
   useEffect(()=>{const b=Object.fromEntries(SOAP_KEYS.map(s=>[s.key,record[s.key]||""]));if(initialSoap){for(const sk of SOAP_KEYS){if(sk.apiKey&&initialSoap[sk.apiKey]&&!b[sk.key])b[sk.key]=initialSoap[sk.apiKey];}}setSoap(b);},[record.id]);
-  const handleSaveAndCopy=async()=>{setSaving(true);setMsg("");try{await onUpdate(record.id,soap);const mt=buildMusubiText(soap);if(mt){await navigator.clipboard.writeText(mt);setMsg("✅ 保存＋Musubiコピー完了");}else setMsg("✅ 保存しました");}catch(e){setMsg("❌ "+e.message);}setSaving(false);setTimeout(()=>setMsg(""),3000);};
+
+  // テンプレートとチェックルールをDBから読み込み
+  useEffect(()=>{(async()=>{
+    try{
+      let tq=supabase.from("soap_templates").select("*").eq("is_active",true).order("sort_order");
+      // グローバル + 自社 + 自店のテンプレートを取得
+      const{data:tData}=await tq;
+      const filtered=(tData||[]).filter(t=>
+        (!t.company_id && !t.store_id) ||
+        (t.company_id===companyId && !t.store_id) ||
+        (t.store_id===storeId)
+      );
+      setDbTemplates(filtered);
+
+      const{data:rData}=await supabase.from("soap_check_rules").select("*").eq("is_active",true).order("sort_order");
+      const filteredRules=(rData||[]).filter(r=>!r.company_id || r.company_id===companyId);
+      setCheckRules(filteredRules);
+    }catch(e){console.error("Template/Rule load:",e);}
+  })();},[storeId,companyId]);
+
+  // 記載チェック実行
+  const runCheck=useCallback(()=>{
+    const warns=[];
+    checkRules.forEach(rule=>{
+      (rule.required_fields||[]).forEach(field=>{
+        const val=(soap[field]||"").trim();
+        const fieldLabel=SOAP_KEYS.find(s=>s.key===field)?.label||field;
+        if(!val)warns.push(`${fieldLabel}が未記入です（${rule.name}）`);
+        else if(rule.min_length>0&&val.length<rule.min_length)warns.push(`${fieldLabel}が${rule.min_length}文字未満です（${rule.name}）`);
+      });
+    });
+    setCheckWarnings(warns);
+    return warns;
+  },[soap,checkRules]);
+
+  // テンプレート一括適用
+  const applyTemplate=(tpl)=>{
+    const newSoap={...soap};
+    SOAP_KEYS.forEach(s=>{
+      if(tpl[s.key]?.trim()){
+        newSoap[s.key]=newSoap[s.key]?newSoap[s.key]+"\n"+tpl[s.key]:tpl[s.key];
+      }
+    });
+    setSoap(newSoap);
+    setShowTplPicker(false);
+    setMsg("✅ テンプレートを適用しました");
+    setTimeout(()=>setMsg(""),2000);
+  };
+
+  const handleSaveAndCopy=async()=>{
+    const warns=runCheck();
+    if(warns.length>0&&!confirm(`⚠️ 記載チェック警告:\n\n${warns.join("\n")}\n\nこのまま保存しますか？`))return;
+    setSaving(true);setMsg("");try{await onUpdate(record.id,soap);const mt=buildMusubiText(soap);if(mt){await navigator.clipboard.writeText(mt);setMsg("✅ 保存＋Musubiコピー完了");}else setMsg("✅ 保存しました");}catch(e){setMsg("❌ "+e.message);}setSaving(false);setTimeout(()=>setMsg(""),3000);
+  };
+
   return(<div>
     <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:4,background:"none",border:"none",fontSize:13,fontWeight:700,color:"#64748b",cursor:"pointer",padding:"0 0 10px"}}><ArrowLeft size={14}/> 一覧に戻る</button>
     <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",border:"1px solid #e8ecf0",marginBottom:12}}>
@@ -224,8 +281,49 @@ function RecordDetail({record,onBack,onUpdate,onDelete,initialSoap}){
       <p style={{margin:0,fontSize:13,color:"#1e293b",lineHeight:1.8,whiteSpace:"pre-wrap"}}>{record.transcript}</p>
     </div>
     <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",border:"1px solid #e8ecf0",marginBottom:12}}>
-      <div style={{fontSize:13,fontWeight:800,color:"#0f172a",marginBottom:10}}>SOAP入力</div>
-      {SOAP_KEYS.map(s=>(<div key={s.key} style={{marginBottom:10}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}><span style={{fontSize:12,fontWeight:800,color:s.color,width:50}}>{s.label}</span><span style={{fontSize:10,color:"#94a3b8",flex:1}}>{s.full}</span><TemplatePicker soapKey={s.key} onInsert={t=>setSoap(p=>({...p,[s.key]:p[s.key]?p[s.key]+"\n"+t:t}))}/></div><textarea value={soap[s.key]} onChange={e=>setSoap(p=>({...p,[s.key]:e.target.value}))} placeholder={`${s.full}...`} rows={2} style={{width:"100%",padding:"8px 10px",border:`1px solid ${s.color}30`,borderRadius:8,fontSize:12,outline:"none",resize:"vertical",fontFamily:"inherit",boxSizing:"border-box",lineHeight:1.7}}/></div>))}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#0f172a"}}>SOAP入力</div>
+        <div style={{display:"flex",gap:6}}>
+          {dbTemplates.length>0&&(
+            <div style={{position:"relative"}}>
+              <button onClick={()=>setShowTplPicker(!showTplPicker)} style={{background:"linear-gradient(135deg,#6366f1,#4f46e5)",color:"#fff",border:"none",borderRadius:8,padding:"5px 10px",fontSize:10,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+                <Download size={11}/> テンプレート適用
+              </button>
+              {showTplPicker&&(
+                <div style={{position:"absolute",top:30,right:0,background:"#fff",border:"1px solid #e2e8f0",borderRadius:10,boxShadow:"0 8px 24px rgba(0,0,0,.12)",zIndex:30,minWidth:220,maxHeight:260,overflow:"auto",padding:6}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#94a3b8",padding:"4px 8px"}}>テンプレートを選択</div>
+                  {dbTemplates.map(tpl=>{
+                    const catColors={general:"#64748b",initial:"#2563eb",followup:"#059669",highrisk:"#dc2626",custom:"#7c3aed"};
+                    const catLabels={general:"一般",initial:"初回",followup:"継続",highrisk:"ハイリスク",custom:"カスタム"};
+                    return(
+                      <div key={tpl.id} onClick={()=>applyTemplate(tpl)} style={{padding:"8px 10px",cursor:"pointer",borderRadius:6,marginBottom:2}} onMouseEnter={e=>e.currentTarget.style.background="#f0fdfa"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{fontSize:12,fontWeight:700,color:"#0f172a"}}>{tpl.name}</span>
+                          <span style={{fontSize:9,fontWeight:600,color:catColors[tpl.category]||"#64748b",background:`${catColors[tpl.category]||"#64748b"}15`,padding:"1px 5px",borderRadius:4}}>{catLabels[tpl.category]||tpl.category}</span>
+                        </div>
+                        {tpl.description&&<div style={{fontSize:10,color:"#94a3b8",marginTop:2}}>{tpl.description}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+          {checkRules.length>0&&(
+            <button onClick={runCheck} style={{background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:8,padding:"5px 10px",fontSize:10,fontWeight:700,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+              <Search size={11}/> 記載チェック
+            </button>
+          )}
+        </div>
+      </div>
+      {/* チェック警告 */}
+      {checkWarnings.length>0&&(
+        <div style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#d97706",marginBottom:4}}>⚠️ 記載チェック警告</div>
+          {checkWarnings.map((w,i)=><div key={i} style={{fontSize:11,color:"#92400e",padding:"1px 0"}}>{w}</div>)}
+        </div>
+      )}
+      {SOAP_KEYS.map(s=>(<div key={s.key} style={{marginBottom:10}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}><span style={{fontSize:12,fontWeight:800,color:s.color,width:50}}>{s.label}</span><span style={{fontSize:10,color:"#94a3b8",flex:1}}>{s.full}</span><TemplatePicker soapKey={s.key} onInsert={t=>setSoap(p=>({...p,[s.key]:p[s.key]?p[s.key]+"\n"+t:t}))} dbTemplates={dbTemplates}/></div><textarea value={soap[s.key]} onChange={e=>setSoap(p=>({...p,[s.key]:e.target.value}))} placeholder={`${s.full}...`} rows={2} style={{width:"100%",padding:"8px 10px",border:`1px solid ${s.color}30`,borderRadius:8,fontSize:12,outline:"none",resize:"vertical",fontFamily:"inherit",boxSizing:"border-box",lineHeight:1.7}}/></div>))}
       <button onClick={handleSaveAndCopy} disabled={saving} style={{width:"100%",padding:"10px",background:"linear-gradient(135deg,#0d9488,#0f766e)",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>{saving?<Loader2 size={14} style={{animation:"spin 1s linear infinite"}}/>:<><Check size={14}/> 保存＋Musubiコピー</>}</button>
       {msg&&<div style={{marginTop:8,fontSize:12,color:msg.startsWith("✅")?"#059669":"#dc2626",fontWeight:600,textAlign:"center"}}>{msg}</div>}
     </div>
@@ -379,7 +477,7 @@ export default function App(){
       </div>)}
 
       {/* ===== レコード詳細 ===== */}
-      {view==="detail"&&selectedRecord&&<RecordDetail record={selectedRecord} onBack={()=>{setView("list");setAiSoap(null);}} onUpdate={handleUpdateRecord} onDelete={handleDeleteRecord} initialSoap={aiSoap}/>}
+      {view==="detail"&&selectedRecord&&<RecordDetail record={selectedRecord} onBack={()=>{setView("list");setAiSoap(null);}} onUpdate={handleUpdateRecord} onDelete={handleDeleteRecord} initialSoap={aiSoap} storeId={currentStore?.id} companyId={userInfo?.company_id}/>}
     </main>
     {showDiag&&<DiagPanel onClose={()=>setShowDiag(false)} currentStore={currentStore} apiKey={apiKey}/>}
   </div>);
