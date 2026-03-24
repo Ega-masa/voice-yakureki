@@ -51,6 +51,7 @@ const ROLE_ICONS = { super_admin: ShieldCheck, store_admin: Shield, pharmacist: 
 
 // === Store Form Modal ===
 function StoreFormModal({ store, companies, onClose, onSave }) {
+  const isEdit = !!store;
   const [form, setForm] = useState({
     name: store?.name || "",
     name_kana: store?.name_kana || "",
@@ -60,61 +61,140 @@ function StoreFormModal({ store, companies, onClose, onSave }) {
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  // ログインアカウント関連
+  const [storePass, setStorePass] = useState("");
+  const [passMsg, setPassMsg] = useState("");
+  const [creatingAuth, setCreatingAuth] = useState(false);
+
+  const generatePassword = () => {
+    const chars = "abcdefghjkmnpqrstuvwxyz23456789";
+    let pw = "";
+    for (let i = 0; i < 8; i++) pw += chars[Math.floor(Math.random() * chars.length)];
+    setStorePass(pw);
+  };
 
   const handleSave = async () => {
     if (!form.name.trim()) { setErr("店舗名を入力してください"); return; }
     if (!form.company_id) { setErr("会社を選択してください"); return; }
+    // 新規の場合はパスワード必須
+    if (!isEdit && !storePass) { setErr("店舗パスワードを設定してください（自動生成ボタンが便利です）"); return; }
     setSaving(true); setErr("");
     try {
       const payload = { name: form.name, name_kana: form.name_kana, company_id: form.company_id, max_users: form.max_users, memo: form.memo };
-      if (store) {
+      if (isEdit) {
         const { error } = await supabase.from("stores").update(payload).eq("id", store.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("stores").insert(payload);
+        // 新規店舗: INSERT → login_idはトリガーで自動付与
+        const { data: newStore, error } = await supabase.from("stores").insert(payload).select().single();
         if (error) throw error;
+        // Auth アカウント作成
+        if (newStore?.login_id && storePass) {
+          const r = await fetch("/api/auth", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "create_store_account", login_id: newStore.login_id, password: storePass, store_id: newStore.id }),
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error("店舗は作成されましたが、ログインアカウントの作成に失敗: " + d.error);
+        }
       }
       onSave();
     } catch (e) { setErr(e.message); }
     setSaving(false);
   };
 
+  // 既存店舗のパスワード変更 or Auth作成
+  const handleAuthAction = async () => {
+    if (!storePass || storePass.length < 6) { setPassMsg("❌ 6文字以上のパスワードを入力してください"); return; }
+    setCreatingAuth(true); setPassMsg("");
+    try {
+      if (store.auth_user_id) {
+        // パスワード変更
+        const r = await fetch("/api/auth", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "change_password", auth_user_id: store.auth_user_id, new_password: storePass }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setPassMsg("✅ パスワードを変更しました");
+      } else {
+        // Auth アカウント新規作成
+        const r = await fetch("/api/auth", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "create_store_account", login_id: store.login_id, password: storePass, store_id: store.id }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setPassMsg("✅ ログインアカウントを作成しました");
+      }
+      setStorePass("");
+    } catch (e) { setPassMsg("❌ " + e.message); }
+    setCreatingAuth(false);
+  };
+
   return (
     <div style={S.modal} onClick={onClose}>
-      <div style={S.modalBox} onClick={e => e.stopPropagation()}>
+      <div style={{...S.modalBox, maxWidth:480}} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-          <h3 style={{ margin:0, fontSize:16, fontWeight:800 }}>{store ? "店舗を編集" : "新しい店舗を追加"}</h3>
+          <h3 style={{ margin:0, fontSize:16, fontWeight:800 }}>{isEdit ? "店舗を編集" : "新しい店舗を追加"}</h3>
           <button onClick={onClose} style={{ background:"#f1f5f9", border:"none", borderRadius:8, width:30, height:30, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}><X size={15} color="#64748b"/></button>
         </div>
-        <div style={{ marginBottom:12 }}>
+
+        {/* 既存店舗: login_id表示 */}
+        {isEdit && store.login_id && (
+          <div style={{ marginBottom:14, padding:"10px 14px", background:"#f0fdfa", borderRadius:10, border:"1px solid #ccfbf1" }}>
+            <div style={{ fontSize:10, color:"#64748b", marginBottom:2 }}>店舗ログインID</div>
+            <div style={{ fontSize:18, fontWeight:800, fontFamily:"monospace", letterSpacing:3, color:"#0f766e" }}>{store.login_id}</div>
+            {!store.auth_user_id && <div style={{ fontSize:10, color:"#d97706", marginTop:4 }}>⚠ ログインアカウント未作成（下のパスワード設定で作成してください）</div>}
+          </div>
+        )}
+
+        <div style={{ marginBottom:10 }}>
           <label style={S.label}>店舗名（漢字） *</label>
           <input style={S.input} value={form.name} onChange={e => setForm(p => ({...p, name: e.target.value}))} placeholder="例: ○○薬局 本店" />
         </div>
-        <div style={{ marginBottom:12 }}>
+        <div style={{ marginBottom:10 }}>
           <label style={S.label}>店舗名（フリガナ）</label>
           <input style={S.input} value={form.name_kana} onChange={e => setForm(p => ({...p, name_kana: e.target.value}))} placeholder="例: まるまるやっきょく ほんてん" />
         </div>
-        <div style={{ marginBottom:12 }}>
+        <div style={{ marginBottom:10 }}>
           <label style={S.label}>所属会社 *</label>
           <select style={S.input} value={form.company_id} onChange={e => setForm(p => ({...p, company_id: e.target.value}))}>
             <option value="">選択してください</option>
             {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name} ({c.company_code})</option>)}
           </select>
         </div>
-        <div style={{ display:"flex", gap:12, marginBottom:12 }}>
+        <div style={{ display:"flex", gap:10, marginBottom:10 }}>
           <div style={{ flex:1 }}>
             <label style={S.label}>最大ユーザー数</label>
             <input style={S.input} type="number" min={1} max={100} value={form.max_users} onChange={e => setForm(p => ({...p, max_users: parseInt(e.target.value) || 10}))} />
           </div>
         </div>
-        <div style={{ marginBottom:16 }}>
+        <div style={{ marginBottom:12 }}>
           <label style={S.label}>メモ</label>
           <textarea style={{...S.input, resize:"vertical"}} rows={2} value={form.memo} onChange={e => setForm(p => ({...p, memo: e.target.value}))} placeholder="管理者向けメモ" />
         </div>
+
+        {/* パスワード設定 */}
+        <div style={{ padding:"12px 14px", background: isEdit ? "#fef3c7" : "#f0f9ff", borderRadius:10, border: isEdit ? "1px solid #fde68a" : "1px solid #bfdbfe", marginBottom:14 }}>
+          <div style={{ fontSize:12, fontWeight:700, color: isEdit ? "#92400e" : "#1e40af", marginBottom:6 }}>
+            {isEdit ? (store.auth_user_id ? "パスワード変更" : "ログインアカウント作成") : "店舗パスワード設定 *"}
+          </div>
+          <div style={{ display:"flex", gap:6 }}>
+            <input type="text" value={storePass} onChange={e => setStorePass(e.target.value)} placeholder="6文字以上" style={{...S.input, flex:1, marginBottom:0, fontSize:13, fontFamily:"monospace"}} />
+            <button onClick={generatePassword} style={{...S.btnOutline, whiteSpace:"nowrap", fontSize:10, padding:"6px 10px"}}>自動生成</button>
+            {isEdit && <button onClick={handleAuthAction} disabled={creatingAuth} style={{...S.btn(isEdit && store.auth_user_id ? "#d97706" : "#2563eb"), whiteSpace:"nowrap", fontSize:10}}>
+              {creatingAuth ? <Loader2 size={12} style={{ animation:"spin 1s linear infinite" }}/> : (store.auth_user_id ? "変更" : "作成")}
+            </button>}
+          </div>
+          {storePass && <div style={{ fontSize:10, color:"#64748b", marginTop:6 }}>生成されたパスワード: <span style={{ fontFamily:"monospace", fontWeight:700, fontSize:12, color:"#0f172a" }}>{storePass}</span>（この画面を閉じる前にメモしてください）</div>}
+          {passMsg && <div style={{ fontSize:11, marginTop:6, color:passMsg.startsWith("✅")?"#059669":"#dc2626", fontWeight:600 }}>{passMsg}</div>}
+        </div>
+
         {err && <div style={{ fontSize:11, color:"#dc2626", marginBottom:8, padding:"6px 10px", background:"#fef2f2", borderRadius:8 }}>{err}</div>}
-        <button onClick={handleSave} disabled={saving} style={S.btn()}>
+        <button onClick={handleSave} disabled={saving} style={{...S.btn(), width:"100%", justifyContent:"center"}}>
           {saving ? <Loader2 size={14} style={{ animation:"spin 1s linear infinite" }}/> : <Save size={14}/>}
-          {store ? "更新" : "追加"}
+          {isEdit ? "更新" : "追加"}
         </button>
       </div>
     </div>
@@ -2421,7 +2501,11 @@ export default function Admin({ session, onBack }) {
                           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                             <Building2 size={18} color={s.is_active ? "#0d9488" : "#94a3b8"}/>
                             <div style={{ flex:1 }}>
-                              <div style={{ fontSize:13, fontWeight:800, color:s.is_active ? "#0f172a" : "#94a3b8" }}>{s.name}</div>
+                              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                                <span style={{ fontSize:13, fontWeight:800, color:s.is_active ? "#0f172a" : "#94a3b8" }}>{s.name}</span>
+                                {s.login_id && <span style={{ fontSize:10, fontFamily:"monospace", fontWeight:700, color:"#0d9488", background:"#ecfdf5", padding:"1px 6px", borderRadius:4 }}>{s.login_id}</span>}
+                                {s.login_id && !s.auth_user_id && <span style={{ fontSize:9, color:"#d97706", fontWeight:600 }}>未開通</span>}
+                              </div>
                               <div style={{ fontSize:10, color:"#94a3b8" }}>
                                 {s.name_kana && <span style={{ marginRight:8 }}>{s.name_kana}</span>}
                                 最大{s.max_users}名
