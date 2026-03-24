@@ -4,10 +4,9 @@ import { Mic, Square, Loader2, X, RotateCcw, Upload, FileAudio, List, ArrowLeft,
 import { saveRecord, getRecords, updateRecord, deleteRecord, testConnection as testSupabase, SUPABASE_VERSION, signIn, signUp, signOut, getSession, onAuthChange, supabase, getUserInfo, getApiKey, logUsage, findCompanyByCode, searchStores, linkUserToStore, ensureUser, loadDrugMaster, correctDrugNames } from "./supabase";
 import Admin from "./Admin.jsx";
 
-const APP_VERSION = "5.5.0";
+const APP_VERSION = "5.7.0";
 const ST = { IDLE:"idle", REC:"rec", PROCESSING:"processing" };
 const ACCEPT = ".mp3,.wav,.webm,.ogg,.m4a,.aac,.flac,.mp4,.mpeg,.mpga";
-const CC_KEY = "vy-company-code";
 const STORE_KEY = "vy-last-store-id";
 
 const SOAP_KEYS = [
@@ -41,64 +40,31 @@ async function classifySOAP(transcript,sessionToken){const headers={"Content-Typ
 // ★ IME安定化: toUpperCaseは送信時のみ実行
 // ======================================
 function LoginScreen({onLogin}){
-  const[cc,setCc]=useState(()=>{try{return localStorage.getItem(CC_KEY)||"";}catch{return"";}});
-  const[email,setEmail]=useState("");const[pass,setPass]=useState("");const[mode,setMode]=useState("login");
-  const[fullName,setFullName]=useState("");const[employeeId,setEmployeeId]=useState("");
-  const[loading,setLoading]=useState(false);const[err,setErr]=useState("");const[success,setSuccess]=useState("");
-  const[showResend,setShowResend]=useState(false);const[resending,setResending]=useState(false);
+  const[loginId,setLoginId]=useState(()=>{try{return localStorage.getItem("vy-login-id")||"";}catch{return"";}});
+  const[pass,setPass]=useState("");
+  const[loading,setLoading]=useState(false);const[err,setErr]=useState("");
   const[helpMode,setHelpMode]=useState(null);const[helpEmail,setHelpEmail]=useState("");const[helpLoading,setHelpLoading]=useState(false);const[helpResult,setHelpResult]=useState("");
 
   const handle=async()=>{
-    const code=cc.trim().toUpperCase();
-    if(!code){setErr("会社コードを入力してください");return;}
-    if(!email||!pass){setErr("メールアドレスとパスワードを入力してください");return;}
-    if(mode==="signup"&&!fullName.trim()){setErr("氏名を入力してください");return;}
-    if(mode==="signup"&&!employeeId.trim()){setErr("社員番号を入力してください");return;}
-    setLoading(true);setErr("");setSuccess("");setShowResend(false);
+    const id=loginId.trim().toUpperCase();
+    if(!id){setErr("店舗IDまたは管理者IDを入力してください");return;}
+    if(!pass){setErr("パスワードを入力してください");return;}
+    setLoading(true);setErr("");
     try{
-      const company=await findCompanyByCode(code);
-      if(!company)throw new Error("会社コードが見つかりません");
-      if(mode==="signup"){
-        const signUpData=await signUp(email,pass);
-        const uid=signUpData?.user?.id;
-        if(uid){
-          await ensureUser(uid,email,company.id,{display_name:fullName.trim(),employee_id:employeeId.trim()});
-        }
-        try{await signOut();}catch{}
-        setSuccess("登録申請が完了しました。管理者の承認をお待ちください。");
-        try{fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({event:"new_signup",company_id:company.id,data:{user_name:fullName.trim(),email}})}).catch(()=>{});}catch{}
-        setMode("login");setPass("");
-      }else{
-        await signIn(email,pass);
-        const info=await getUserInfo(email);
-        if(info&&info.is_approved===false){await signOut();setErr("アカウントはまだ承認されていません。管理者の承認をお待ちください。");setLoading(false);return;}
-        try{localStorage.setItem(CC_KEY,code);}catch{}
-        if(!info){const s2=await getSession();if(s2?.user?.id)await ensureUser(s2.user.id,email,company.id);}
-        onLogin();
-      }
+      // 内部ダミーメールに変換してSupabase Auth認証
+      const email=`${id.toLowerCase()}@vy.internal`;
+      await signIn(email,pass);
+      try{localStorage.setItem("vy-login-id",id);}catch{}
+      onLogin();
     }catch(e){
       const msg=e.message||"";
-      if(msg.toLowerCase().includes("email not confirmed")||msg.includes("メール未確認")){
-        setErr("メールアドレスの確認が完了していません。受信トレイ（迷惑メールフォルダ含む）を確認してください。");
-        setShowResend(true);
+      if(msg.includes("Invalid login")||msg.includes("invalid_credentials")){
+        setErr("IDまたはパスワードが正しくありません");
       }else{
         setErr(msg);
-        setShowResend(false);
       }
     }
     setLoading(false);
-  };
-
-  const handleResend=async()=>{
-    if(!email){setErr("メールアドレスを入力してください");return;}
-    setResending(true);setErr("");
-    try{
-      const{error}=await supabase.auth.resend({type:"signup",email});
-      if(error)throw error;
-      setSuccess("確認メールを再送しました。受信トレイを確認してください。");
-      setShowResend(false);
-    }catch(e){setErr("再送に失敗しました: "+e.message);}
-    setResending(false);
   };
 
   const handleFindCode=async()=>{
@@ -107,7 +73,7 @@ function LoginScreen({onLogin}){
       const r=await fetch("/api/admin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"find_company_by_email",email:helpEmail.trim()})});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error);
-      setHelpResult(`✅ 会社: ${d.company_name}\n会社コード: ${d.masked_code}\n※ 完全なコードは管理者にお問い合わせください`);
+      setHelpResult(`✅ 会社: ${d.company_name}\n会社コード: ${d.masked_code}\n管理者にお問い合わせください`);
     }catch(e){setHelpResult("❌ "+e.message);}
     setHelpLoading(false);
   };
@@ -118,8 +84,7 @@ function LoginScreen({onLogin}){
       const r=await fetch("/api/admin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"request_password_reset",email:helpEmail.trim()})});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error);
-      setHelpResult("✅ 管理者にパスワードリセットを依頼しました。\n管理者が新しいパスワードを設定した後、再度ログインしてください。");
-      try{fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({event:"password_reset",data:{email:helpEmail.trim()}})}).catch(()=>{});}catch{}
+      setHelpResult("✅ 管理者にパスワードリセットを依頼しました。");
     }catch(e){setHelpResult("❌ "+e.message);}
     setHelpLoading(false);
   };
@@ -134,54 +99,28 @@ function LoginScreen({onLogin}){
         <div style={{fontSize:10,color:"#94a3b8",marginTop:2}}>v{APP_VERSION}</div>
       </div>
       <div style={{marginBottom:12}}>
-        <label style={{fontSize:11,fontWeight:700,color:"#475569",display:"block",marginBottom:4}}>会社コード</label>
-        <input value={cc} onChange={e=>setCc(e.target.value)} placeholder="管理者から共有されたコード" autoComplete="organization" style={{...IS,fontSize:14,fontWeight:700,fontFamily:"monospace",letterSpacing:2,marginBottom:12}}/>
+        <label style={{fontSize:11,fontWeight:700,color:"#475569",display:"block",marginBottom:4}}>店舗ID / 管理者ID</label>
+        <input value={loginId} onChange={e=>setLoginId(e.target.value)} placeholder="例: YK-A3B7X2" autoComplete="username" style={{...IS,fontSize:15,fontWeight:700,fontFamily:"monospace",letterSpacing:2,textTransform:"uppercase"}}/>
       </div>
-      <div style={{display:"flex",gap:4,marginBottom:14,background:"#f1f5f9",borderRadius:10,padding:3}}>
-        {[{id:"login",label:"ログイン"},{id:"signup",label:"新規登録申請"}].map(m=><button key={m.id} onClick={()=>{setMode(m.id);setErr("");setSuccess("");setShowResend(false);}} style={{flex:1,padding:"6px",border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",background:mode===m.id?"#fff":"transparent",color:mode===m.id?"#0f172a":"#94a3b8"}}>{m.label}</button>)}
+      <div style={{marginBottom:14}}>
+        <label style={{fontSize:11,fontWeight:700,color:"#475569",display:"block",marginBottom:4}}>パスワード</label>
+        <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="パスワード" autoComplete="current-password" onKeyDown={e=>e.key==="Enter"&&handle()} style={{...IS,marginBottom:4}}/>
       </div>
-      {mode==="signup"&&<>
-        <input value={fullName} onChange={e=>setFullName(e.target.value)} placeholder="氏名（フルネーム）" autoComplete="name" style={IS}/>
-        <input value={employeeId} onChange={e=>setEmployeeId(e.target.value)} placeholder="社員番号" autoComplete="off" style={IS}/>
-      </>}
-      <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="メールアドレス" autoComplete="email" style={IS}/>
-      <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="パスワード" autoComplete={mode==="login"?"current-password":"new-password"} onKeyDown={e=>e.key==="Enter"&&handle()} style={{...IS,marginBottom:12}}/>
-      {success&&<div style={{fontSize:11,color:"#059669",marginBottom:8,padding:"8px 10px",background:"#ecfdf5",borderRadius:8,lineHeight:1.6}}>{success}</div>}
       {err&&<div style={{fontSize:11,color:"#dc2626",marginBottom:8,padding:"6px 10px",background:"#fef2f2",borderRadius:8,lineHeight:1.6}}>{err}</div>}
-      {showResend&&<button onClick={handleResend} disabled={resending} style={{width:"100%",padding:"8px",background:"#f0f9ff",color:"#2563eb",border:"1px solid #bfdbfe",borderRadius:10,fontSize:12,fontWeight:700,cursor:resending?"wait":"pointer",marginBottom:8,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-        {resending?<Loader2 size={14} style={{animation:"spin 1s linear infinite"}}/>:"📧 確認メールを再送する"}
-      </button>}
-      <button onClick={handle} disabled={loading||!email||!pass||!cc.trim()} style={{width:"100%",padding:"10px",background:loading?"#94a3b8":"linear-gradient(135deg,#0d9488,#0f766e)",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:loading?"wait":"pointer"}}>
-        {loading?<Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>:mode==="login"?"ログイン":"登録申請"}
+      <button onClick={handle} disabled={loading||!loginId.trim()||!pass} style={{width:"100%",padding:"10px",background:loading?"#94a3b8":"linear-gradient(135deg,#0d9488,#0f766e)",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:loading?"wait":"pointer"}}>
+        {loading?<Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>:"ログイン"}
       </button>
-      {/* ヘルプリンク */}
-      {mode==="login"&&<div style={{display:"flex",justifyContent:"center",gap:16,marginTop:12}}>
-        <button onClick={()=>setHelpMode(helpMode==="code"?null:"code")} style={{background:"none",border:"none",fontSize:11,color:"#6366f1",cursor:"pointer",textDecoration:"underline"}}>会社コードを忘れた</button>
+      <div style={{display:"flex",justifyContent:"center",gap:16,marginTop:12}}>
+        <button onClick={()=>setHelpMode(helpMode==="id"?null:"id")} style={{background:"none",border:"none",fontSize:11,color:"#6366f1",cursor:"pointer",textDecoration:"underline"}}>IDを忘れた</button>
         <button onClick={()=>setHelpMode(helpMode==="pass"?null:"pass")} style={{background:"none",border:"none",fontSize:11,color:"#6366f1",cursor:"pointer",textDecoration:"underline"}}>パスワードを忘れた</button>
+      </div>
+      {helpMode==="id"&&<div style={{marginTop:10,padding:"12px 14px",background:"#f0f9ff",borderRadius:10,border:"1px solid #bfdbfe"}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#1e40af",marginBottom:6}}>店舗IDを検索</div>
+        <div style={{fontSize:10,color:"#64748b",marginBottom:8}}>管理者に発行された店舗IDをご確認ください。店舗IDは管理画面の店舗一覧に表示されています。</div>
       </div>}
-      {/* 会社コード検索パネル */}
-      {helpMode==="code"&&<div style={{marginTop:10,padding:"12px 14px",background:"#f0f9ff",borderRadius:10,border:"1px solid #bfdbfe"}}>
-        <div style={{fontSize:12,fontWeight:700,color:"#1e40af",marginBottom:8}}>会社コードを検索</div>
-        <div style={{fontSize:10,color:"#64748b",marginBottom:8}}>登録したメールアドレスから会社コードを検索できます</div>
-        <div style={{display:"flex",gap:6}}>
-          <input type="email" value={helpEmail} onChange={e=>setHelpEmail(e.target.value)} placeholder="メールアドレス" style={{flex:1,padding:"8px 10px",border:"1px solid #e2e8f0",borderRadius:8,fontSize:12,outline:"none"}}/>
-          <button onClick={handleFindCode} disabled={helpLoading||!helpEmail} style={{padding:"8px 14px",background:"#2563eb",color:"#fff",border:"none",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
-            {helpLoading?<Loader2 size={12} style={{animation:"spin 1s linear infinite"}}/>:"検索"}
-          </button>
-        </div>
-        {helpResult&&<div style={{fontSize:11,marginTop:8,color:helpResult.startsWith("❌")?"#dc2626":"#059669",fontWeight:600,lineHeight:1.6}}>{helpResult}</div>}
-      </div>}
-      {/* パスワードリセット依頼パネル */}
       {helpMode==="pass"&&<div style={{marginTop:10,padding:"12px 14px",background:"#fef3c7",borderRadius:10,border:"1px solid #fde68a"}}>
-        <div style={{fontSize:12,fontWeight:700,color:"#92400e",marginBottom:8}}>パスワードリセット</div>
-        <div style={{fontSize:10,color:"#64748b",marginBottom:8}}>管理者にパスワードリセットを依頼できます</div>
-        <div style={{display:"flex",gap:6}}>
-          <input type="email" value={helpEmail} onChange={e=>setHelpEmail(e.target.value)} placeholder="メールアドレス" style={{flex:1,padding:"8px 10px",border:"1px solid #e2e8f0",borderRadius:8,fontSize:12,outline:"none"}}/>
-          <button onClick={handleRequestReset} disabled={helpLoading||!helpEmail} style={{padding:"8px 14px",background:"#d97706",color:"#fff",border:"none",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
-            {helpLoading?<Loader2 size={12} style={{animation:"spin 1s linear infinite"}}/>:"依頼"}
-          </button>
-        </div>
-        {helpResult&&<div style={{fontSize:11,marginTop:8,color:helpResult.startsWith("❌")?"#dc2626":"#059669",fontWeight:600,lineHeight:1.6}}>{helpResult}</div>}
+        <div style={{fontSize:12,fontWeight:700,color:"#92400e",marginBottom:6}}>パスワードリセット</div>
+        <div style={{fontSize:10,color:"#64748b",marginBottom:8}}>管理者にお問い合わせください。管理画面からパスワードのリセットが可能です。</div>
       </div>}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
@@ -367,43 +306,56 @@ export default function App(){
   const[records,setRecords]=useState([]);const[selectedRecord,setSelectedRecord]=useState(null);const[loadingRecords,setLoadingRecords]=useState(false);
   const[savedId,setSavedId]=useState(null);const[aiSoap,setAiSoap]=useState(null);const[procLog,setProcLog]=useState([]);const[patientName,setPatientName]=useState("");
   const[userInfo,setUserInfo]=useState(null);const[currentStore,setCurrentStore]=useState(null);const[apiKey,setApiKey]=useState("");
-  const[showStorePicker,setShowStorePicker]=useState(false);
   const[deferredPrompt,setDeferredPrompt]=useState(null);const[showInstall,setShowInstall]=useState(false);
-  const[emailConfirmed,setEmailConfirmed]=useState(false);
   const recRef=useRef(null);const chunksRef=useRef([]);const timerRef=useRef(null);const streamRef=useRef(null);const analyserRef=useRef(null);const levelRef=useRef(null);const fileRef=useRef(null);
   const addProcLog=(msg,status)=>setProcLog(p=>[...p,{time:ts(),msg,status}]);
   const isAdmin=userInfo?.role==="super_admin"||userInfo?.role==="store_admin";
 
-  // メール確認コールバック検出
-  useEffect(()=>{
-    const hash=window.location.hash;
-    if(hash.includes("type=signup")||hash.includes("type=email")||hash.includes("access_token=")){
-      setEmailConfirmed(true);
-      // URLハッシュをクリーン（Supabase SDKがトークンを処理した後）
-      setTimeout(()=>{window.location.hash="";},500);
-    }
-  },[]);
-
   // Auth
   useEffect(()=>{getSession().then(s=>setSession(s));const{data}=onAuthChange(s=>setSession(s));return()=>data.subscription.unsubscribe();},[]);
-  // User info + store restore
-  useEffect(()=>{if(!session?.user?.email)return;(async()=>{
+  // ログイン後の初期化: ユーザー種別判定 + 店舗/管理者ルーティング
+  useEffect(()=>{if(!session?.user)return;(async()=>{
     try{
-      const info=await getUserInfo(session.user.email);
-      setUserInfo(info);
-      // super_adminは管理画面へ直行（店舗選択不要）
-      if(info?.role==="super_admin"){
-        setPage("admin");
-        return;
+      const uid=session.user.id;
+      const meta=session.user.user_metadata||{};
+      const loginType=meta.type; // 'store' | 'admin' | undefined(旧方式)
+
+      // 管理者アカウントの場合
+      if(loginType==="admin"){
+        const{data:adminAcc}=await supabase.from("admin_accounts").select("*").eq("auth_user_id",uid).maybeSingle();
+        if(adminAcc){
+          setUserInfo({id:uid,email:session.user.email,role:adminAcc.role||"super_admin",company_id:adminAcc.company_id,display_name:adminAcc.display_name,is_approved:true});
+          setPage("admin");
+          return;
+        }
       }
-      try{const lastId=localStorage.getItem(STORE_KEY);if(lastId){const{data:s}=await supabase.from("stores").select("id,name,name_kana").eq("id",lastId).single();if(s){setCurrentStore(s);return;}}}catch{}
-      if(info?.user_stores?.[0]?.stores){setCurrentStore(info.user_stores[0].stores);}
-      else{setShowStorePicker(true);}
+
+      // 店舗アカウントの場合
+      if(loginType==="store"){
+        const{data:store}=await supabase.from("stores").select("id,name,name_kana,company_id").eq("auth_user_id",uid).maybeSingle();
+        if(store){
+          setCurrentStore(store);
+          setUserInfo({id:uid,email:session.user.email,role:"pharmacist",company_id:store.company_id,display_name:store.name,is_approved:true});
+          return;
+        }
+      }
+
+      // 旧方式（メール認証）のフォールバック
+      if(session.user.email){
+        const info=await getUserInfo(session.user.email);
+        if(info){
+          setUserInfo(info);
+          if(info.role==="super_admin"){setPage("admin");return;}
+          // 店舗復元
+          try{const lastId=localStorage.getItem(STORE_KEY);if(lastId){const{data:s}=await supabase.from("stores").select("id,name,name_kana").eq("id",lastId).single();if(s){setCurrentStore(s);return;}}}catch{}
+          if(info.user_stores?.[0]?.stores){setCurrentStore(info.user_stores[0].stores);return;}
+        }
+      }
+      // 何も見つからない場合
+      setUserInfo({id:uid,email:session.user.email||"",role:"pharmacist",is_approved:true,_loadError:true});
     }catch(e){
-      console.error("User init error:",e);
-      // RLSエラー等でuserInfoが取れない場合にフォールバック
-      setUserInfo({email:session.user.email,role:"pharmacist",is_approved:true,_loadError:true});
-      setShowStorePicker(true);
+      console.error("Init error:",e);
+      setUserInfo({id:session.user.id,email:session.user.email||"",role:"pharmacist",is_approved:true,_loadError:true});
     }
   })();},[session]);
   // API key from DB
@@ -429,23 +381,16 @@ export default function App(){
   const reset=()=>{setResult("");setError("");setSavedId(null);setAiSoap(null);setProcLog([]);setElapsed(0);setView("mic");};
   const handleUpdateRecord=async(id,d)=>{const u=await updateRecord(id,d);setRecords(p=>p.map(r=>r.id===id?u:r));setSelectedRecord(u);};
   const handleDeleteRecord=async id=>{await deleteRecord(id);setRecords(p=>p.filter(r=>r.id!==id));setSelectedRecord(null);setView("list");};
-  const handleStoreSelect=async(store)=>{setCurrentStore(store);setShowStorePicker(false);try{localStorage.setItem(STORE_KEY,store.id);}catch{}if(userInfo?.id)try{await linkUserToStore(userInfo.id,store.id);}catch{}};
   const isRec=state===ST.REC;const isBusy=state===ST.PROCESSING;const hasResult=result||error;
 
   // ルーティング
   if(session===undefined)return<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><Loader2 size={28} style={{animation:"spin 1s linear infinite",color:"#0d9488"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
-  // メール確認成功画面
-  if(emailConfirmed)return(<div style={{minHeight:"100vh",background:"linear-gradient(168deg,#f0fdfa 0%,#f0f9ff 40%,#fafbfc 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}><div style={{background:"#fff",borderRadius:20,padding:"32px 28px",width:"92%",maxWidth:380,boxShadow:"0 8px 32px rgba(0,0,0,.08)",textAlign:"center"}}><div style={{width:56,height:56,borderRadius:16,background:"linear-gradient(135deg,#059669,#047857)",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:14}}><Check size={28} color="#fff"/></div><div style={{fontSize:18,fontWeight:800,color:"#0f172a",marginBottom:8}}>メール認証が完了しました</div><div style={{fontSize:13,color:"#64748b",lineHeight:1.8,marginBottom:20}}>管理者の承認後にログインできます。<br/>承認されるまでしばらくお待ちください。</div><button onClick={async()=>{try{await signOut();}catch{}setEmailConfirmed(false);setSession(null);}} style={{width:"100%",padding:"10px",background:"linear-gradient(135deg,#0d9488,#0f766e)",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer"}}>ログイン画面へ</button></div><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>);
   if(!session)return<LoginScreen onLogin={()=>{}}/>;
-  // super_admin: 管理画面専用モード（録音画面には行かない）
   if(page==="admin"){
-    const isSuperAdminOnly = userInfo?.role === "super_admin";
-    return<Admin session={session} onBack={isSuperAdminOnly ? async()=>{await signOut();setUserInfo(null);setCurrentStore(null);setPage("app");} : ()=>{window.location.hash="";setPage("app");}}/>;
+    const isAdminAccount = userInfo?.role === "super_admin" || session?.user?.user_metadata?.type === "admin";
+    return<Admin session={session} onBack={isAdminAccount ? async()=>{await signOut();setUserInfo(null);setCurrentStore(null);setPage("app");} : ()=>{window.location.hash="";setPage("app");}}/>;
   }
-  if(showStorePicker)return<StorePicker companyId={userInfo?.company_id} currentStore={currentStore} onSelect={handleStoreSelect} onCancel={currentStore?()=>setShowStorePicker(false):null}/>;
-  if(!userInfo)return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}><Loader2 size={28} style={{animation:"spin 1s linear infinite",color:"#0d9488"}}/><div style={{fontSize:12,color:"#94a3b8",fontFamily:"sans-serif"}}>読み込み中...</div><button onClick={async()=>{await signOut();setSession(null);setUserInfo(null);}} style={{marginTop:16,padding:"8px 20px",background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer"}}>ログアウト</button><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
-  // ★ 未承認ユーザーはブロック画面を表示
-  if(userInfo.is_approved===false)return(<div style={{minHeight:"100vh",background:"linear-gradient(168deg,#f0fdfa 0%,#f0f9ff 40%,#fafbfc 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}><div style={{background:"#fff",borderRadius:20,padding:"32px 28px",width:"92%",maxWidth:380,boxShadow:"0 8px 32px rgba(0,0,0,.08)",textAlign:"center"}}><div style={{width:48,height:48,borderRadius:14,background:"#fef3c7",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:12,fontSize:22}}>⏳</div><div style={{fontSize:16,fontWeight:800,color:"#0f172a",marginBottom:8}}>承認待ち</div><div style={{fontSize:13,color:"#64748b",lineHeight:1.8,marginBottom:16}}>アカウントはまだ管理者に承認されていません。<br/>承認後にログインできます。</div><div style={{fontSize:11,color:"#94a3b8",marginBottom:16}}>{session.user.email}</div><button onClick={async()=>{await signOut();setUserInfo(null);setCurrentStore(null);}} style={{width:"100%",padding:"10px",background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer"}}>ログアウト</button></div></div>);
+  if(!userInfo||!currentStore)return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}><Loader2 size={28} style={{animation:"spin 1s linear infinite",color:"#0d9488"}}/><div style={{fontSize:12,color:"#94a3b8",fontFamily:"sans-serif"}}>読み込み中...</div><button onClick={async()=>{await signOut();setSession(null);setUserInfo(null);setCurrentStore(null);}} style={{marginTop:16,padding:"8px 20px",background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer"}}>ログアウト</button><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
 
   // ======================================
   // メイン画面
@@ -457,17 +402,15 @@ export default function App(){
         <div style={{width:28,height:28,borderRadius:8,background:"linear-gradient(135deg,#0d9488,#0f766e)",display:"flex",alignItems:"center",justifyContent:"center",marginRight:8}}><Mic size={14} color="#fff"/></div>
         <div style={{fontSize:14,fontWeight:800,color:"#0f172a"}}>音声薬歴</div>
         <div style={{flex:1}}/>
-        {isAdmin&&<button onClick={()=>{window.location.hash="admin";setPage("admin");}} style={{background:"linear-gradient(135deg,#6366f1,#4f46e5)",border:"none",borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginLeft:4}} title="管理画面"><Shield size={14} color="#fff"/></button>}
-        {isAdmin&&<button onClick={()=>{window.location.hash="#admin";}} style={{background:"#0f172a",border:"none",borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginLeft:4}} title="管理画面"><Shield size={14} color="#64748b"/></button>}
+        {isAdmin&&<button onClick={()=>{window.location.hash="#admin";setPage("admin");}} style={{background:"linear-gradient(135deg,#6366f1,#4f46e5)",border:"none",borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginLeft:4}} title="管理画面"><Shield size={14} color="#fff"/></button>}
         <button onClick={async()=>{await signOut();setUserInfo(null);setCurrentStore(null);}} style={{background:"#fef2f2",border:"none",borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginLeft:4}} title="ログアウト"><LogOut size={14} color="#ef4444"/></button>
       </div>
     </header>
-    {/* ★ 店舗バー: 店舗名を大きく表示 + タップで切替 */}
-    <div onClick={()=>setShowStorePicker(true)} style={{background:"linear-gradient(135deg,#f0fdfa,#ecfeff)",borderBottom:"1px solid #ccfbf1",padding:"8px 16px",cursor:"pointer",maxWidth:"100%"}} title="タップして店舗を切替">
+    {/* 店舗バー */}
+    <div style={{background:"linear-gradient(135deg,#f0fdfa,#ecfeff)",borderBottom:"1px solid #ccfbf1",padding:"8px 16px"}}>
       <div style={{maxWidth:680,margin:"0 auto",display:"flex",alignItems:"center",gap:8}}>
         <Building2 size={16} color="#0d9488"/>
-        <span style={{fontSize:13,fontWeight:800,color:"#0f766e"}}>{currentStore?.name||"店舗を選択してください"}</span>
-        <span style={{fontSize:10,fontWeight:700,color:"#0d9488",background:"#fff",padding:"3px 10px",borderRadius:6,border:"1px solid #99f6e4",whiteSpace:"nowrap"}}>切替</span>
+        <span style={{fontSize:13,fontWeight:800,color:"#0f766e"}}>{currentStore?.name||"店舗未設定"}</span>
       </div>
     </div>
 
