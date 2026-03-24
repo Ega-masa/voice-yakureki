@@ -5,7 +5,7 @@ import { supabase } from "./supabase";
 import { 
   Building2, Users, Key, BarChart3, Plus, Trash2, Edit3, Save, X, 
   ArrowLeft, Shield, ShieldCheck, UserCheck, Loader2, RefreshCw,
-  CheckCircle, XCircle, Copy, Eye, EyeOff, LogOut, ChevronDown, Check,
+  CheckCircle, XCircle, Copy, Eye, EyeOff, LogOut, ChevronDown, ChevronRight, Check,
   Settings, Search, ArrowUp, ArrowDown, FileText, AlertTriangle, Pill, Upload, Bell, Activity
 } from "lucide-react";
 
@@ -1760,7 +1760,7 @@ function DiagPanel() {
 
   const runTests = async () => {
     setTesting(true); setLog([]);
-    addLog("Version", "info", `Admin v5.6.0`);
+    addLog("Version", "info", `Admin v5.6.1`);
     addLog("Supabase", "testing", "接続テスト中...");
     try {
       const { data, error } = await supabase.from("records").select("id").limit(1);
@@ -1771,16 +1771,23 @@ function DiagPanel() {
       const r = await fetch("/api/soap"); const d = await r.json();
       addLog("SOAP API", d.status === "ok" ? "ok" : "error", `v${d.version} / Anthropic: ${d.anthropic_key_set ? "✅" : "❌"}`);
     } catch (e) { addLog("SOAP API", "error", e.message); }
-    addLog("Admin API", "testing", "管理API確認中...");
+    // Admin API + 環境変数チェック
+    addLog("Admin API", "testing", "環境変数確認中...");
     try {
-      const r = await fetch("/api/admin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "ping" }) });
-      addLog("Admin API", r.status === 400 ? "ok" : "error", r.status === 400 ? "接続OK（認証なしで400は正常）" : `HTTP ${r.status}`);
+      const r = await fetch("/api/admin"); const d = await r.json();
+      if (d.env) {
+        const missing = [];
+        if (!d.env.SUPABASE_URL) missing.push("SUPABASE_URL");
+        if (!d.env.SUPABASE_ANON_KEY) missing.push("SUPABASE_ANON_KEY");
+        if (!d.env.SUPABASE_SERVICE_ROLE_KEY) missing.push("SUPABASE_SERVICE_ROLE_KEY");
+        if (!d.env.ANTHROPIC_API_KEY) missing.push("ANTHROPIC_API_KEY");
+        if (missing.length === 0) {
+          addLog("Admin API", "ok", "全環境変数設定済み");
+        } else {
+          addLog("Admin API", "error", `未設定: ${missing.join(", ")} → Vercel Settings → Environment Variables で設定後 Redeploy`);
+        }
+      } else { addLog("Admin API", "error", "応答異常"); }
     } catch (e) { addLog("Admin API", "error", e.message); }
-    addLog("Notify API", "testing", "通知API確認中...");
-    try {
-      const r = await fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-      addLog("Notify API", r.status === 400 ? "ok" : r.status === 500 ? "error" : "ok", r.status === 500 ? "SERVICE_ROLE_KEY未設定" : "接続OK");
-    } catch (e) { addLog("Notify API", "error", e.message); }
     addLog("DB Stats", "testing", "統計取得中...");
     try {
       const [{ count: rc }, { count: uc }, { count: sc }, { count: cc }] = await Promise.all([
@@ -2200,6 +2207,8 @@ export default function Admin({ session, onBack }) {
   const [userFilterCompany, setUserFilterCompany] = useState("all");
   const [userFilterStore, setUserFilterStore] = useState("all");
   const [userFilterRole, setUserFilterRole] = useState("all");
+  const [expandedStoreGroups, setExpandedStoreGroups] = useState({});
+  const [expandedUserGroups, setExpandedUserGroups] = useState({});
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -2399,14 +2408,15 @@ export default function Admin({ session, onBack }) {
                   const comp = companiesList.find(c => c.id === cid);
                   const storeList = grouped[cid];
                   return (
-                    <div key={cid} style={{ marginBottom:16 }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8, padding:"6px 10px", background:"#f1f5f9", borderRadius:8 }}>
+                    <div key={cid} style={{ marginBottom:12 }}>
+                      <div onClick={() => setExpandedStoreGroups(p => ({...p, [cid]: !p[cid]}))} style={{ display:"flex", alignItems:"center", gap:6, marginBottom: expandedStoreGroups[cid] !== false ? 6 : 0, padding:"8px 10px", background:"#f1f5f9", borderRadius:8, cursor:"pointer", userSelect:"none" }}>
+                        {expandedStoreGroups[cid] !== false ? <ChevronDown size={13} color="#64748b"/> : <ChevronRight size={13} color="#64748b"/>}
                         <Building2 size={13} color="#6366f1"/>
                         <span style={{ fontSize:12, fontWeight:800, color:"#334155" }}>{comp?.name || "未所属"}</span>
                         {comp?.company_code && <span style={{ fontSize:10, color:"#94a3b8" }}>({comp.company_code})</span>}
                         <span style={{ fontSize:10, color:"#94a3b8", marginLeft:"auto" }}>{storeList.length}店舗</span>
                       </div>
-                      {storeList.map(s => (
+                      {expandedStoreGroups[cid] !== false && storeList.map(s => (
                         <div key={s.id} style={{...S.card, marginLeft:8 }}>
                           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                             <Building2 size={18} color={s.is_active ? "#0d9488" : "#94a3b8"}/>
@@ -2490,15 +2500,16 @@ export default function Admin({ session, onBack }) {
                     const comp = companiesList.find(c => c.id === cid);
                     const users = grouped[cid];
                     return (
-                      <div key={cid} style={{ marginBottom:16 }}>
+                      <div key={cid} style={{ marginBottom:12 }}>
                         {cids.length > 1 && (
-                          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8, padding:"6px 10px", background:"#f1f5f9", borderRadius:8 }}>
+                          <div onClick={() => setExpandedUserGroups(p => ({...p, [cid]: !p[cid]}))} style={{ display:"flex", alignItems:"center", gap:6, marginBottom: expandedUserGroups[cid] !== false ? 6 : 0, padding:"8px 10px", background:"#f1f5f9", borderRadius:8, cursor:"pointer", userSelect:"none" }}>
+                            {expandedUserGroups[cid] !== false ? <ChevronDown size={13} color="#64748b"/> : <ChevronRight size={13} color="#64748b"/>}
                             <Building2 size={13} color="#6366f1"/>
                             <span style={{ fontSize:12, fontWeight:800, color:"#334155" }}>{comp?.name || "未所属"}</span>
                             <span style={{ fontSize:10, color:"#94a3b8", marginLeft:"auto" }}>{users.length}名</span>
                           </div>
                         )}
-                        {users.map(u => {
+                        {(cids.length <= 1 || expandedUserGroups[cid] !== false) && users.map(u => {
                           const userRole = rolesList.find(r => r.id === u.role_id);
                           const roleName = userRole?.name || ROLE_LABELS[u.role] || u.role;
                           const roleColor = userRole?.color || ROLE_COLORS[u.role]?.color || "#64748b";
