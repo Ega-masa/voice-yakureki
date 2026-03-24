@@ -6,7 +6,7 @@ import {
   Building2, Users, Key, BarChart3, Plus, Trash2, Edit3, Save, X, 
   ArrowLeft, Shield, ShieldCheck, UserCheck, Loader2, RefreshCw,
   CheckCircle, XCircle, Copy, Eye, EyeOff, LogOut, ChevronDown, ChevronRight, Check,
-  Settings, Search, ArrowUp, ArrowDown, FileText, AlertTriangle, Pill, Upload, Bell, Activity
+  Settings, Search, ArrowUp, ArrowDown, FileText, AlertTriangle, Pill, Upload, Bell, Activity, Download
 } from "lucide-react";
 
 // === Styles ===
@@ -65,6 +65,7 @@ function StoreFormModal({ store, companies, onClose, onSave }) {
   const [storePass, setStorePass] = useState("");
   const [passMsg, setPassMsg] = useState("");
   const [creatingAuth, setCreatingAuth] = useState(false);
+  const [showPassChange, setShowPassChange] = useState(false);
 
   const generatePassword = () => {
     const chars = "abcdefghjkmnpqrstuvwxyz23456789";
@@ -161,7 +162,7 @@ function StoreFormModal({ store, companies, onClose, onSave }) {
           <label style={S.label}>所属会社 *</label>
           <select style={S.input} value={form.company_id} onChange={e => setForm(p => ({...p, company_id: e.target.value}))}>
             <option value="">選択してください</option>
-            {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name} ({c.company_code})</option>)}
+            {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
         <div style={{ display:"flex", gap:10, marginBottom:10 }}>
@@ -176,20 +177,55 @@ function StoreFormModal({ store, companies, onClose, onSave }) {
         </div>
 
         {/* パスワード設定 */}
-        <div style={{ padding:"12px 14px", background: isEdit ? "#fef3c7" : "#f0f9ff", borderRadius:10, border: isEdit ? "1px solid #fde68a" : "1px solid #bfdbfe", marginBottom:14 }}>
-          <div style={{ fontSize:12, fontWeight:700, color: isEdit ? "#92400e" : "#1e40af", marginBottom:6 }}>
-            {isEdit ? (store.auth_user_id ? "パスワード変更" : "ログインアカウント作成") : "店舗パスワード設定 *"}
+        {isEdit ? (
+          store.auth_user_id ? (
+            /* 既存アカウント: パスワード変更ボタン → 展開 */
+            <div style={{ marginBottom:14 }}>
+              {!showPassChange ? (
+                <button onClick={() => setShowPassChange(true)} style={{...S.btnOutline, width:"100%", justifyContent:"center", fontSize:11, padding:"8px"}}>🔑 パスワードを変更する</button>
+              ) : (
+                <div style={{ padding:"12px 14px", background:"#fef3c7", borderRadius:10, border:"1px solid #fde68a" }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#92400e", marginBottom:6 }}>パスワード変更</div>
+                  <div style={{ display:"flex", gap:6 }}>
+                    <input type="text" value={storePass} onChange={e => setStorePass(e.target.value)} placeholder="新しいパスワード（6文字以上）" style={{...S.input, flex:1, marginBottom:0, fontSize:13, fontFamily:"monospace"}} />
+                    <button onClick={generatePassword} style={{...S.btnOutline, whiteSpace:"nowrap", fontSize:10, padding:"6px 10px"}}>自動生成</button>
+                    <button onClick={handleAuthAction} disabled={creatingAuth} style={{...S.btn("#d97706"), whiteSpace:"nowrap", fontSize:10}}>
+                      {creatingAuth ? <Loader2 size={12} style={{ animation:"spin 1s linear infinite" }}/> : "変更"}
+                    </button>
+                  </div>
+                  {storePass && <div style={{ fontSize:10, color:"#64748b", marginTop:6 }}>新パスワード: <span style={{ fontFamily:"monospace", fontWeight:700, fontSize:12, color:"#0f172a" }}>{storePass}</span></div>}
+                  {passMsg && <div style={{ fontSize:11, marginTop:6, color:passMsg.startsWith("✅")?"#059669":"#dc2626", fontWeight:600 }}>{passMsg}</div>}
+                  <button onClick={() => { setShowPassChange(false); setStorePass(""); setPassMsg(""); }} style={{ marginTop:8, background:"none", border:"none", fontSize:10, color:"#94a3b8", cursor:"pointer", textDecoration:"underline" }}>閉じる</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* 未開通: パスワード初期設定 */
+            <div style={{ padding:"12px 14px", background:"#f0f9ff", borderRadius:10, border:"1px solid #bfdbfe", marginBottom:14 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:"#1e40af", marginBottom:6 }}>パスワード初期設定</div>
+              <div style={{ fontSize:10, color:"#64748b", marginBottom:6 }}>この店舗のログインアカウントを有効にするにはパスワードを設定してください</div>
+              <div style={{ display:"flex", gap:6 }}>
+                <input type="text" value={storePass} onChange={e => setStorePass(e.target.value)} placeholder="6文字以上" style={{...S.input, flex:1, marginBottom:0, fontSize:13, fontFamily:"monospace"}} />
+                <button onClick={generatePassword} style={{...S.btnOutline, whiteSpace:"nowrap", fontSize:10, padding:"6px 10px"}}>自動生成</button>
+                <button onClick={handleAuthAction} disabled={creatingAuth} style={{...S.btn("#2563eb"), whiteSpace:"nowrap", fontSize:10}}>
+                  {creatingAuth ? <Loader2 size={12} style={{ animation:"spin 1s linear infinite" }}/> : "設定"}
+                </button>
+              </div>
+              {storePass && <div style={{ fontSize:10, color:"#64748b", marginTop:6 }}>パスワード: <span style={{ fontFamily:"monospace", fontWeight:700, fontSize:12, color:"#0f172a" }}>{storePass}</span>（メモしてください）</div>}
+              {passMsg && <div style={{ fontSize:11, marginTop:6, color:passMsg.startsWith("✅")?"#059669":"#dc2626", fontWeight:600 }}>{passMsg}</div>}
+            </div>
+          )
+        ) : (
+          /* 新規店舗: パスワード初期設定 */
+          <div style={{ padding:"12px 14px", background:"#f0f9ff", borderRadius:10, border:"1px solid #bfdbfe", marginBottom:14 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#1e40af", marginBottom:6 }}>店舗パスワード初期設定 *</div>
+            <div style={{ display:"flex", gap:6 }}>
+              <input type="text" value={storePass} onChange={e => setStorePass(e.target.value)} placeholder="6文字以上" style={{...S.input, flex:1, marginBottom:0, fontSize:13, fontFamily:"monospace"}} />
+              <button onClick={generatePassword} style={{...S.btnOutline, whiteSpace:"nowrap", fontSize:10, padding:"6px 10px"}}>自動生成</button>
+            </div>
+            {storePass && <div style={{ fontSize:10, color:"#64748b", marginTop:6 }}>パスワード: <span style={{ fontFamily:"monospace", fontWeight:700, fontSize:12, color:"#0f172a" }}>{storePass}</span>（メモしてください）</div>}
           </div>
-          <div style={{ display:"flex", gap:6 }}>
-            <input type="text" value={storePass} onChange={e => setStorePass(e.target.value)} placeholder="6文字以上" style={{...S.input, flex:1, marginBottom:0, fontSize:13, fontFamily:"monospace"}} />
-            <button onClick={generatePassword} style={{...S.btnOutline, whiteSpace:"nowrap", fontSize:10, padding:"6px 10px"}}>自動生成</button>
-            {isEdit && <button onClick={handleAuthAction} disabled={creatingAuth} style={{...S.btn(isEdit && store.auth_user_id ? "#d97706" : "#2563eb"), whiteSpace:"nowrap", fontSize:10}}>
-              {creatingAuth ? <Loader2 size={12} style={{ animation:"spin 1s linear infinite" }}/> : (store.auth_user_id ? "変更" : "作成")}
-            </button>}
-          </div>
-          {storePass && <div style={{ fontSize:10, color:"#64748b", marginTop:6 }}>生成されたパスワード: <span style={{ fontFamily:"monospace", fontWeight:700, fontSize:12, color:"#0f172a" }}>{storePass}</span>（この画面を閉じる前にメモしてください）</div>}
-          {passMsg && <div style={{ fontSize:11, marginTop:6, color:passMsg.startsWith("✅")?"#059669":"#dc2626", fontWeight:600 }}>{passMsg}</div>}
-        </div>
+        )}
 
         {err && <div style={{ fontSize:11, color:"#dc2626", marginBottom:8, padding:"6px 10px", background:"#fef2f2", borderRadius:8 }}>{err}</div>}
         <button onClick={handleSave} disabled={saving} style={{...S.btn(), width:"100%", justifyContent:"center"}}>
@@ -201,49 +237,38 @@ function StoreFormModal({ store, companies, onClose, onSave }) {
   );
 }
 
-// === User Add Modal ===
-function UserAddModal({ stores, roles, myRole, myRoleId, onClose, onSave }) {
-  const [form, setForm] = useState({ email: "", password: "", store_id: "", role_id: "" });
+// === Admin Account Add Modal ===
+function UserAddModal({ companies, onClose, onSave }) {
+  const [form, setForm] = useState({ login_id: "", password: "", display_name: "", role: "store_admin", company_id: "" });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
-  // sort_orderベース: 自分と同格以下（数値が大きい=下位）のロールのみ選択可
-  const myRoleObj = roles.find(r => r.id === myRoleId);
-  const mySortOrder = myRoleObj?.sort_order ?? (myRole === "super_admin" ? 0 : 99);
-  const assignableRoles = roles.filter(r => r.is_active && (r.sort_order ?? 99) >= mySortOrder);
-
-  // デフォルトロール（一番下位）
-  useEffect(() => {
-    if (assignableRoles.length > 0 && !form.role_id) {
-      const defaultRole = assignableRoles[assignableRoles.length - 1];
-      if (defaultRole) setForm(p => ({...p, role_id: defaultRole.id}));
-    }
-  }, [roles]);
+  const generatePassword = () => {
+    const chars = "abcdefghjkmnpqrstuvwxyz23456789";
+    let pw = "";
+    for (let i = 0; i < 8; i++) pw += chars[Math.floor(Math.random() * chars.length)];
+    setForm(p => ({...p, password: pw}));
+  };
 
   const handleSave = async () => {
-    if (!form.email || !form.password) { setErr("メールアドレスとパスワードを入力してください"); return; }
-    if (!form.store_id) { setErr("所属店舗を選択してください"); return; }
-    if (!form.role_id) { setErr("ロールを選択してください"); return; }
+    if (!form.login_id.trim()) { setErr("管理者IDを入力してください"); return; }
+    if (!form.password || form.password.length < 6) { setErr("6文字以上のパスワードを入力してください"); return; }
+    if (!form.display_name.trim()) { setErr("表示名を入力してください"); return; }
     setSaving(true); setErr("");
     try {
-      const selectedRole = roles.find(r => r.id === form.role_id);
-      const legacyRole = selectedRole?.name === "全体管理者" ? "super_admin" : selectedRole?.name === "店舗管理者" ? "store_admin" : "pharmacist";
-
-      const { data: authData, error: authError } = await supabase.auth.signUp({ email: form.email, password: form.password });
-      if (authError) throw authError;
-      const userId = authData.user?.id;
-      if (!userId) throw new Error("ユーザーIDが取得できません");
-
-      const { error: userError } = await supabase.from("users").insert({
-        id: userId, email: form.email, role: legacyRole, role_id: form.role_id,
-        display_name: form.email.split("@")[0], is_approved: true,
+      const r = await fetch("/api/auth", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create_admin_account",
+          login_id: form.login_id.trim(),
+          password: form.password,
+          display_name: form.display_name.trim(),
+          role: form.role,
+          company_id: form.company_id || null,
+        }),
       });
-      if (userError) throw userError;
-
-      const { error: linkError } = await supabase.from("user_stores").insert({
-        user_id: userId, store_id: form.store_id, role: legacyRole,
-      });
-      if (linkError) throw linkError;
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
       onSave();
     } catch (e) { setErr(e.message); }
     setSaving(false);
@@ -253,41 +278,46 @@ function UserAddModal({ stores, roles, myRole, myRoleId, onClose, onSave }) {
     <div style={S.modal} onClick={onClose}>
       <div style={S.modalBox} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-          <h3 style={{ margin:0, fontSize:16, fontWeight:800 }}>新しいユーザーを追加</h3>
+          <h3 style={{ margin:0, fontSize:16, fontWeight:800 }}>管理者アカウント追加</h3>
           <button onClick={onClose} style={{ background:"#f1f5f9", border:"none", borderRadius:8, width:30, height:30, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}><X size={15} color="#64748b"/></button>
         </div>
-        <div style={{ marginBottom:12 }}>
-          <label style={S.label}>メールアドレス *</label>
-          <input style={S.input} type="email" value={form.email} onChange={e => setForm(p => ({...p, email: e.target.value}))} placeholder="user@example.com" />
+        <div style={{ marginBottom:10 }}>
+          <label style={S.label}>管理者ID *</label>
+          <input style={{...S.input, fontFamily:"monospace"}} value={form.login_id} onChange={e => setForm(p => ({...p, login_id: e.target.value}))} placeholder="例: admin-tanaka" />
         </div>
-        <div style={{ marginBottom:12 }}>
+        <div style={{ marginBottom:10 }}>
+          <label style={S.label}>表示名 *</label>
+          <input style={S.input} value={form.display_name} onChange={e => setForm(p => ({...p, display_name: e.target.value}))} placeholder="例: 田中太郎" />
+        </div>
+        <div style={{ marginBottom:10 }}>
           <label style={S.label}>パスワード *</label>
-          <input style={S.input} type="password" value={form.password} onChange={e => setForm(p => ({...p, password: e.target.value}))} placeholder="6文字以上" />
+          <div style={{ display:"flex", gap:6 }}>
+            <input style={{...S.input, flex:1, marginBottom:0, fontFamily:"monospace"}} value={form.password} onChange={e => setForm(p => ({...p, password: e.target.value}))} placeholder="6文字以上" />
+            <button onClick={generatePassword} style={{...S.btnOutline, whiteSpace:"nowrap", fontSize:10}}>自動生成</button>
+          </div>
+          {form.password && <div style={{ fontSize:10, color:"#64748b", marginTop:4 }}>パスワード: <span style={{ fontFamily:"monospace", fontWeight:700 }}>{form.password}</span></div>}
         </div>
-        <div style={{ marginBottom:12 }}>
-          <label style={S.label}>所属店舗 *</label>
-          <select style={{...S.input, cursor:"pointer"}} value={form.store_id} onChange={e => setForm(p => ({...p, store_id: e.target.value}))}>
-            <option value="">選択してください</option>
-            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        <div style={{ marginBottom:10 }}>
+          <label style={S.label}>ロール</label>
+          <select style={S.input} value={form.role} onChange={e => setForm(p => ({...p, role: e.target.value}))}>
+            <option value="super_admin">システム管理者</option>
+            <option value="store_admin">会社管理者</option>
           </select>
         </div>
-        <div style={{ marginBottom:16 }}>
-          <label style={S.label}>ロール *</label>
-          <select style={{...S.input, cursor:"pointer"}} value={form.role_id} onChange={e => setForm(p => ({...p, role_id: e.target.value}))}>
-            <option value="">選択してください</option>
-            {assignableRoles.map(r => (
-              <option key={r.id} value={r.id}>{r.name}{r.description ? ` — ${r.description}` : ""}</option>
-            ))}
-          </select>
-        </div>
+        {form.role === "store_admin" && (
+          <div style={{ marginBottom:10 }}>
+            <label style={S.label}>所属会社</label>
+            <select style={S.input} value={form.company_id} onChange={e => setForm(p => ({...p, company_id: e.target.value}))}>
+              <option value="">選択してください</option>
+              {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+        )}
         {err && <div style={{ fontSize:11, color:"#dc2626", marginBottom:8, padding:"6px 10px", background:"#fef2f2", borderRadius:8 }}>{err}</div>}
-        <button onClick={handleSave} disabled={saving} style={S.btn()}>
+        <button onClick={handleSave} disabled={saving} style={{...S.btn(), width:"100%", justifyContent:"center"}}>
           {saving ? <Loader2 size={14} style={{ animation:"spin 1s linear infinite" }}/> : <Plus size={14}/>}
-          ユーザーを作成
+          作成
         </button>
-        <div style={{ marginTop:10, fontSize:10, color:"#94a3b8", lineHeight:1.6 }}>
-          ※ 作成されたアカウントのメールアドレスとパスワードを店舗に共有してください
-        </div>
       </div>
     </div>
   );
@@ -412,7 +442,7 @@ function UserEditModal({ user, stores, roles, companies, myRole, myRoleId, myPer
             <label style={S.label}>所属会社</label>
             <select style={S.input} value={form.company_id} onChange={e => handleCompanyChange(e.target.value)}>
               <option value="">未所属</option>
-              {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name}（{c.company_code}）</option>)}
+              {(companies||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
         ) : companyName ? (
@@ -2077,7 +2107,7 @@ function CompanyPanel({ onRefresh }) {
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: "", company_code: "" });
+  const [form, setForm] = useState({ name: "" });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
@@ -2089,16 +2119,15 @@ function CompanyPanel({ onRefresh }) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const startEdit = (c) => { setEditing(c.id); setForm({ name: c.name, company_code: c.company_code || "" }); setErr(""); };
-  const startNew = () => { setEditing("new"); setForm({ name: "", company_code: "" }); setErr(""); };
+  const startEdit = (c) => { setEditing(c.id); setForm({ name: c.name }); setErr(""); };
+  const startNew = () => { setEditing("new"); setForm({ name: "" }); setErr(""); };
   const cancel = () => { setEditing(null); setErr(""); };
 
   const save = async () => {
     if (!form.name.trim()) { setErr("会社名を入力してください"); return; }
-    if (!form.company_code.trim()) { setErr("会社コードを入力してください"); return; }
     setSaving(true); setErr("");
     try {
-      const payload = { name: form.name.trim(), company_code: form.company_code.trim().toUpperCase(), code: form.company_code.trim().toUpperCase() };
+      const payload = { name: form.name.trim() };
       if (editing === "new") {
         const { error } = await supabase.from('companies').insert(payload);
         if (error) throw error;
@@ -2130,14 +2159,9 @@ function CompanyPanel({ onRefresh }) {
       {editing && (
         <div style={{ background:"#f8fafc", borderRadius:12, padding:16, border:"1px solid #e2e8f0", marginBottom:12 }}>
           <div style={{ fontSize:13, fontWeight:700, color:"#0f172a", marginBottom:10 }}>{editing === "new" ? "新しい企業を追加" : "企業を編集"}</div>
-          <div style={{ marginBottom:8 }}>
-            <label style={{ fontSize:11, fontWeight:700, color:"#475569", display:"block", marginBottom:3 }}>会社名</label>
-            <input style={{ width:"100%", padding:"9px 12px", border:"2px solid #e2e8f0", borderRadius:10, fontSize:13, outline:"none", boxSizing:"border-box" }} value={form.name} onChange={e => setForm(p => ({...p, name: e.target.value}))} placeholder="例: ○○薬局グループ" />
-          </div>
           <div style={{ marginBottom:10 }}>
-            <label style={{ fontSize:11, fontWeight:700, color:"#475569", display:"block", marginBottom:3 }}>会社コード（ログイン時に使用）</label>
-            <input style={{ width:"100%", padding:"9px 12px", border:"2px solid #e2e8f0", borderRadius:10, fontSize:13, outline:"none", boxSizing:"border-box", fontFamily:"monospace", letterSpacing:2 }} value={form.company_code} onChange={e => setForm(p => ({...p, company_code: e.target.value}))} placeholder="例: AKAKABE" />
-            <div style={{ fontSize:10, color:"#94a3b8", marginTop:2 }}>半角英数字。スタッフがログイン時に入力するコードです。</div>
+            <label style={{ fontSize:11, fontWeight:700, color:"#475569", display:"block", marginBottom:3 }}>会社名 *</label>
+            <input style={{ width:"100%", padding:"9px 12px", border:"2px solid #e2e8f0", borderRadius:10, fontSize:13, outline:"none", boxSizing:"border-box" }} value={form.name} onChange={e => setForm(p => ({...p, name: e.target.value}))} placeholder="例: ○○薬局グループ" />
           </div>
           {err && <div style={{ fontSize:11, color:"#dc2626", marginBottom:8, padding:"5px 8px", background:"#fef2f2", borderRadius:6 }}>{err}</div>}
           <div style={{ display:"flex", gap:8 }}>
@@ -2155,10 +2179,7 @@ function CompanyPanel({ onRefresh }) {
             <Building2 size={20} color={c.is_active ? "#6366f1" : "#94a3b8"} />
             <div style={{ flex:1 }}>
               <div style={{ fontSize:14, fontWeight:800, color:c.is_active ? "#0f172a" : "#94a3b8" }}>{c.name}</div>
-              <div style={{ fontSize:11, color:"#64748b" }}>
-                コード: <span style={{ fontFamily:"monospace", fontWeight:700 }}>{c.company_code || "未設定"}</span>
-                {!c.is_active && <span style={{ fontSize:10, fontWeight:700, color:"#ef4444", background:"#fef2f2", padding:"1px 6px", borderRadius:4, marginLeft:6 }}>無効</span>}
-              </div>
+              {!c.is_active && <span style={{ fontSize:10, fontWeight:700, color:"#ef4444", background:"#fef2f2", padding:"1px 6px", borderRadius:4 }}>無効</span>}
             </div>
             <button onClick={() => startEdit(c)} style={{ background:"#f1f5f9", border:"none", borderRadius:8, padding:"6px 10px", cursor:"pointer" }}><Edit3 size={12} color="#64748b"/></button>
             <button onClick={() => toggleActive(c.id, c.is_active)} style={{ background:"#f1f5f9", border:"none", borderRadius:8, padding:"6px 10px", cursor:"pointer" }}>
@@ -2172,104 +2193,11 @@ function CompanyPanel({ onRefresh }) {
 }
 
 // === Pending Users (申請一覧) ===
-function PendingUsersPanel({ onRefresh }) {
-  const [pending, setPending] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState(new Set());
-  const [processing, setProcessing] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const { data } = await supabase.from('users').select('*').eq('is_approved', false).order('created_at', { ascending: false });
-    setPending(data || []);
-    setSelected(new Set());
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const toggleSelect = (id) => {
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
-
-  const selectAll = () => {
-    if (selected.size === pending.length) setSelected(new Set());
-    else setSelected(new Set(pending.map(u => u.id)));
-  };
-
-  const handleApprove = async () => {
-    if (selected.size === 0) return;
-    setProcessing(true);
-    try {
-      const ids = Array.from(selected);
-      await supabase.from('users').update({ is_approved: true }).in('id', ids);
-      await load();
-      onRefresh();
-    } catch (e) { alert(e.message); }
-    setProcessing(false);
-  };
-
-  const handleReject = async (id) => {
-    if (!confirm('この申請を拒否して削除しますか？')) return;
-    try {
-      await supabase.from('user_stores').delete().eq('user_id', id);
-      await supabase.from('users').delete().eq('id', id);
-      await load();
-    } catch (e) { alert(e.message); }
-  };
-
-  const fmtDt = (d) => { const dt = new Date(d); return `${dt.getMonth()+1}/${dt.getDate()} ${dt.getHours()}:${String(dt.getMinutes()).padStart(2,'0')}`; };
-
-  if (loading) return <div style={{ textAlign:"center", padding:30 }}><Loader2 size={24} style={{ animation:"spin 1s linear infinite", color:"#94a3b8" }}/></div>;
-
-  return (
-    <div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-        <div style={{ fontSize:14, fontWeight:800, color:"#0f172a" }}>承認待ち ({pending.length}件)</div>
-        <div style={{ display:"flex", gap:6 }}>
-          {pending.length > 0 && <button onClick={selectAll} style={{ background:"#f1f5f9", border:"1px solid #e2e8f0", borderRadius:8, padding:"6px 12px", fontSize:11, fontWeight:700, color:"#64748b", cursor:"pointer" }}>
-            {selected.size === pending.length ? "全解除" : "全選択"}
-          </button>}
-          {selected.size > 0 && <button onClick={handleApprove} disabled={processing} style={{ background:"linear-gradient(135deg,#0d9488,#0f766e)", color:"#fff", border:"none", borderRadius:8, padding:"6px 14px", fontSize:11, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
-            {processing ? <Loader2 size={12} style={{ animation:"spin 1s linear infinite" }}/> : <CheckCircle size={12}/>}
-            {selected.size}件を承認
-          </button>}
-        </div>
-      </div>
-      {pending.length === 0 ? (
-        <div style={S.empty}>承認待ちの申請はありません</div>
-      ) : (
-        pending.map(u => (
-          <div key={u.id} style={{...S.card, display:"flex", alignItems:"center", gap:10, cursor:"pointer"}} onClick={() => toggleSelect(u.id)}>
-            <div style={{ width:22, height:22, borderRadius:6, border:`2px solid ${selected.has(u.id) ? "#0d9488" : "#d1d5db"}`, background:selected.has(u.id) ? "#0d9488" : "#fff", display:"flex", alignItems:"center", justifyContent:"center", transition:"all 0.15s", flexShrink:0 }}>
-              {selected.has(u.id) && <Check size={14} color="#fff"/>}
-            </div>
-            <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>{u.display_name || "（名前未入力）"}</div>
-              <div style={{ fontSize:11, color:"#64748b" }}>{u.email}</div>
-              <div style={{ fontSize:10, color:"#94a3b8", display:"flex", gap:8, marginTop:2, flexWrap:"wrap" }}>
-                {u.employee_id && <span>社員番号: {u.employee_id}</span>}
-                <span>申請日: {fmtDt(u.created_at)}</span>
-              </div>
-            </div>
-            <button onClick={(e) => { e.stopPropagation(); handleReject(u.id); }} style={{ background:"#fff", color:"#ef4444", border:"1px solid #fecaca", borderRadius:8, padding:"5px 10px", fontSize:10, fontWeight:700, cursor:"pointer", flexShrink:0 }}>
-              拒否
-            </button>
-          </div>
-        ))
-      )}
-    </div>
-  );
-}
 
 // === Main Admin Component ===
 export default function Admin({ session, onBack }) {
   const [tab, setTab] = useState("stores");
-  const [pendingCount, setPendingCount] = useState(0);
+  
   const [stores, setStores] = useState([]);
   const [usersData, setUsersData] = useState([]);
   const [apiKeys, setApiKeys] = useState([]);
@@ -2279,13 +2207,10 @@ export default function Admin({ session, onBack }) {
   const [showUserAdd, setShowUserAdd] = useState(false);
   const [showUserEdit, setShowUserEdit] = useState(null);
   const [companiesList, setCompaniesList] = useState([]);
-  const [storeFilterCompany, setStoreFilterCompany] = useState("all");
   const [rolesList, setRolesList] = useState([]);
   const [myPermissions, setMyPermissions] = useState([]);
   // ユーザー検索・フィルタ
   const [userSearch, setUserSearch] = useState("");
-  const [userFilterCompany, setUserFilterCompany] = useState("all");
-  const [userFilterStore, setUserFilterStore] = useState("all");
   const [userFilterRole, setUserFilterRole] = useState("all");
   const [expandedStoreGroups, setExpandedStoreGroups] = useState({});
   const [expandedUserGroups, setExpandedUserGroups] = useState({});
@@ -2356,10 +2281,6 @@ export default function Admin({ session, onBack }) {
       }
 
       // 申請件数（store_adminは自社のみ）
-      let pendQ = supabase.from("users").select("*", { count: "exact", head: true }).eq("is_approved", false);
-      if (!isSA && myCompanyId) pendQ = pendQ.eq("company_id", myCompanyId);
-      const { count: pc } = await pendQ;
-      setPendingCount(pc || 0);
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [session]);
@@ -2411,7 +2332,6 @@ export default function Admin({ session, onBack }) {
   };
 
   const allTabs = [
-    { id:"pending", label:"申請", icon:UserCheck, roles:["super_admin","store_admin"] },
     { id:"company", label:"会社管理", icon:Building2, roles:["super_admin"] },
     { id:"stores", label:"店舗管理", icon:Building2, roles:["super_admin","store_admin"] },
     { id:"users", label:"ユーザー", icon:Users, roles:["super_admin","store_admin"] },
@@ -2452,7 +2372,6 @@ export default function Admin({ session, onBack }) {
           {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)} style={{...S.tab(tab === t.id), position:"relative"}}>
               <t.icon size={14}/> {t.label}
-              {t.id === "pending" && pendingCount > 0 && <span style={{ position:"absolute", top:-4, right:-4, background:"#ef4444", color:"#fff", fontSize:9, fontWeight:800, borderRadius:10, minWidth:18, height:18, display:"flex", alignItems:"center", justifyContent:"center", padding:"0 4px" }}>{pendingCount}</span>}
             </button>
           ))}
         </div>
@@ -2462,11 +2381,20 @@ export default function Admin({ session, onBack }) {
           <div>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
               <div style={{ fontSize:14, fontWeight:800, color:"#0f172a" }}>登録店舗 ({stores.length})</div>
-              {isSuperAdmin && (
-                <button onClick={() => setShowStoreForm(false)} style={S.btn()}>
-                  <Plus size={14}/> 新規追加
-                </button>
-              )}
+              <div style={{ display:"flex", gap:6 }}>
+                <button onClick={() => {
+                  const rows = [["店舗名","店舗ID","会社名","ステータス"]];
+                  stores.forEach(s => {
+                    const comp = companiesList.find(c => c.id === s.company_id);
+                    rows.push([s.name, s.login_id || "", comp?.name || "", s.auth_user_id ? "開通済" : "未開通"]);
+                  });
+                  const csv = rows.map(r => r.map(c => `"${(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
+                  const blob = new Blob(["\uFEFF"+csv], { type:"text/csv;charset=utf-8" });
+                  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+                  a.download = `店舗一覧_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+                }} style={{...S.btnOutline, fontSize:10, padding:"6px 10px"}}><Download size={12}/> CSV</button>
+                {isSuperAdmin && <button onClick={() => setShowStoreForm(false)} style={S.btn()}><Plus size={14}/> 新規追加</button>}
+              </div>
             </div>
             {stores.length === 0 ? <div style={S.empty}>まだ店舗が登録されていません</div> : (
               (() => {
@@ -2493,7 +2421,7 @@ export default function Admin({ session, onBack }) {
                         {expandedStoreGroups[cid] !== false ? <ChevronDown size={13} color="#64748b"/> : <ChevronRight size={13} color="#64748b"/>}
                         <Building2 size={13} color="#6366f1"/>
                         <span style={{ fontSize:12, fontWeight:800, color:"#334155" }}>{comp?.name || "未所属"}</span>
-                        {comp?.company_code && <span style={{ fontSize:10, color:"#94a3b8" }}>({comp.company_code})</span>}
+                        
                         <span style={{ fontSize:10, color:"#94a3b8", marginLeft:"auto" }}>{storeList.length}店舗</span>
                       </div>
                       {expandedStoreGroups[cid] !== false && storeList.map(s => (
@@ -2536,9 +2464,9 @@ export default function Admin({ session, onBack }) {
           <div>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
               <div style={{ fontSize:14, fontWeight:800, color:"#0f172a" }}>ユーザー ({usersData.length})</div>
-              <button onClick={() => setShowUserAdd(true)} style={S.btn()}>
-                <Plus size={14}/> ユーザー追加
-              </button>
+              {isSuperAdmin && <button onClick={() => setShowUserAdd(true)} style={S.btn()}>
+                <Plus size={14}/> 管理者追加
+              </button>}
             </div>
             <div style={{ marginBottom:14 }}>
               <div style={{ position:"relative", marginBottom:8 }}>
@@ -2687,7 +2615,6 @@ export default function Admin({ session, onBack }) {
         )}
 
         {/* ========== 申請一覧 ========== */}
-        {tab === "pending" && <PendingUsersPanel onRefresh={loadData}/>}
 
         {/* ========== 会社管理 ========== */}
         {tab === "company" && (
@@ -2709,10 +2636,7 @@ export default function Admin({ session, onBack }) {
       )}
       {showUserAdd && (
         <UserAddModal
-          stores={stores}
-          roles={rolesList}
-          myRole={userInfo.role}
-          myRoleId={userInfo.role_id}
+          companies={companiesList}
           onClose={() => setShowUserAdd(false)}
           onSave={() => { setShowUserAdd(false); loadData(); }}
         />

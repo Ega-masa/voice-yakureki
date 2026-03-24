@@ -1,7 +1,7 @@
 // voice-yakureki v5.5.0 App.jsx — 全機能統合版 + テンプレート/チェック連携
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Mic, Square, Loader2, X, RotateCcw, Upload, FileAudio, List, ArrowLeft, Trash2, Clock, Check, Sparkles, ChevronDown, LogOut, User, Shield, Building2, Download, Search } from "lucide-react";
-import { saveRecord, getRecords, updateRecord, deleteRecord, testConnection as testSupabase, SUPABASE_VERSION, signIn, signUp, signOut, getSession, onAuthChange, supabase, getUserInfo, getApiKey, logUsage, findCompanyByCode, searchStores, linkUserToStore, ensureUser, loadDrugMaster, correctDrugNames } from "./supabase";
+import { saveRecord, getRecords, updateRecord, deleteRecord, signIn, signOut, getSession, onAuthChange, supabase, getUserInfo, getApiKey, logUsage, loadDrugMaster, correctDrugNames } from "./supabase";
 import Admin from "./Admin.jsx";
 
 const APP_VERSION = "5.7.0";
@@ -122,44 +122,6 @@ function LoginScreen({onLogin}){
         <div style={{fontSize:12,fontWeight:700,color:"#92400e",marginBottom:6}}>パスワードリセット</div>
         <div style={{fontSize:10,color:"#64748b",marginBottom:8}}>管理者にお問い合わせください。管理画面からパスワードのリセットが可能です。</div>
       </div>}
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    </div>
-  </div>);
-}
-
-// ======================================
-// 店舗選択画面（ひらがな数文字で候補表示）
-// ======================================
-function StorePicker({companyId,currentStore,onSelect,onCancel}){
-  const[query,setQuery]=useState("");const[results,setResults]=useState([]);const[loading,setLoading]=useState(true);
-  useEffect(()=>{(async()=>{setLoading(true);setResults(await searchStores("",companyId));setLoading(false);})();},[companyId]);
-  useEffect(()=>{const t=setTimeout(async()=>{setResults(await searchStores(query,companyId));},300);return()=>clearTimeout(t);},[query,companyId]);
-
-  return(<div style={{minHeight:"100vh",background:"linear-gradient(168deg,#f0fdfa 0%,#f0f9ff 40%,#fafbfc 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif",padding:16}}>
-    <div style={{background:"#fff",borderRadius:20,padding:"28px 24px",width:"100%",maxWidth:420,boxShadow:"0 8px 32px rgba(0,0,0,.08)"}}>
-      <div style={{textAlign:"center",marginBottom:16}}>
-        <Building2 size={28} color="#0d9488" style={{marginBottom:6}}/>
-        <div style={{fontSize:16,fontWeight:800,color:"#0f172a"}}>店舗を選択</div>
-        {currentStore&&<div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>現在: {currentStore.name}</div>}
-      </div>
-      <div style={{display:"flex",alignItems:"center",gap:6,padding:"9px 12px",border:"2px solid #e2e8f0",borderRadius:10,marginBottom:12}}>
-        <Search size={15} color="#94a3b8"/>
-        <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="ひらがな・漢字で検索" autoFocus style={{flex:1,border:"none",outline:"none",fontSize:13,color:"#0f172a",background:"transparent"}}/>
-        {query&&<button onClick={()=>setQuery("")} style={{background:"#e2e8f0",border:"none",borderRadius:6,width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}><X size={10} color="#64748b"/></button>}
-      </div>
-      <div style={{maxHeight:300,overflow:"auto"}}>
-        {loading&&<div style={{textAlign:"center",padding:20}}><Loader2 size={20} style={{animation:"spin 1s linear infinite",color:"#94a3b8"}}/></div>}
-        {!loading&&results.length===0&&<div style={{textAlign:"center",padding:20,color:"#94a3b8",fontSize:12}}>店舗が見つかりません</div>}
-        {results.map(s=>(
-          <button key={s.id} onClick={()=>onSelect(s)} style={{width:"100%",padding:"12px 14px",background:currentStore?.id===s.id?"#f0fdfa":"#fff",border:currentStore?.id===s.id?"2px solid #0d9488":"1px solid #e8ecf0",borderRadius:10,marginBottom:6,cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:10,transition:"all 0.15s"}}
-            onMouseEnter={e=>{if(currentStore?.id!==s.id)e.currentTarget.style.borderColor="#0d9488";}} onMouseLeave={e=>{if(currentStore?.id!==s.id)e.currentTarget.style.borderColor="#e8ecf0";}}>
-            <Building2 size={18} color={currentStore?.id===s.id?"#0d9488":"#94a3b8"}/>
-            <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:"#0f172a"}}>{s.name}</div>{s.name_kana&&<div style={{fontSize:10,color:"#94a3b8"}}>{s.name_kana}</div>}</div>
-            {currentStore?.id===s.id&&<span style={{fontSize:9,fontWeight:700,color:"#0d9488",background:"#ecfdf5",padding:"2px 8px",borderRadius:6}}>選択中</span>}
-          </button>
-        ))}
-      </div>
-      {onCancel&&<button onClick={onCancel} style={{width:"100%",padding:"9px",background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:10,fontSize:12,fontWeight:700,cursor:"pointer",marginTop:8}}>キャンセル</button>}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   </div>);
@@ -362,6 +324,8 @@ export default function App(){
   useEffect(()=>{if(!currentStore)return;(async()=>{try{const key=await getApiKey("groq",currentStore.id);setApiKey(key);}catch(e){console.error("API key load error:",e);}})();},[currentStore]);
   // Hash routing
   useEffect(()=>{const h=()=>setPage(window.location.hash==="#admin"?"admin":"app");window.addEventListener("hashchange",h);return()=>window.removeEventListener("hashchange",h);},[]);
+  // Session timeout (8時間)
+  useEffect(()=>{if(!session)return;const SESSION_TIMEOUT=8*60*60*1000;const checkTimeout=()=>{const lastActivity=parseInt(localStorage.getItem("vy-last-activity")||"0");if(lastActivity&&Date.now()-lastActivity>SESSION_TIMEOUT){signOut().then(()=>{setSession(null);setUserInfo(null);setCurrentStore(null);}).catch(()=>{});}};const updateActivity=()=>{localStorage.setItem("vy-last-activity",Date.now().toString());};updateActivity();const events=["click","keydown","touchstart"];events.forEach(e=>window.addEventListener(e,updateActivity,{passive:true}));const timer=setInterval(checkTimeout,60000);return()=>{events.forEach(e=>window.removeEventListener(e,updateActivity));clearInterval(timer);};},[session]);
   // Timer
   useEffect(()=>{if(state===ST.REC){setElapsed(0);timerRef.current=setInterval(()=>setElapsed(p=>p+1),1000);}else clearInterval(timerRef.current);return()=>clearInterval(timerRef.current);},[state]);
   // PWA

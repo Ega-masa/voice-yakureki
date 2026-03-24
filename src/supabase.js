@@ -1,4 +1,4 @@
-// voice-yakureki v5.2.0 supabase.js
+// voice-yakureki v5.7.0 supabase.js
 import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = 'https://lrtcrczgwxilukltetxa.supabase.co'
@@ -6,14 +6,8 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 export { SUPABASE_URL, SUPABASE_ANON_KEY }
-export const SUPABASE_VERSION = '5.2.0'
 
 // === Auth ===
-export async function signUp(email, password) {
-  const { data, error } = await supabase.auth.signUp({ email, password })
-  if (error) throw error
-  return data
-}
 export async function signIn(email, password) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password })
   if (error) throw error
@@ -31,76 +25,11 @@ export function onAuthChange(callback) {
   return supabase.auth.onAuthStateChange((_event, session) => callback(session))
 }
 
-// === Company ===
-export async function findCompanyByCode(companyCode) {
-  if (!companyCode) return null
-  const { data } = await supabase
-    .from('companies').select('id, name, company_code').eq('company_code', companyCode.toUpperCase()).eq('is_active', true).single()
-  return data
-}
-
 // === User ===
 export async function getUserInfo(email) {
   const { data } = await supabase
     .from('users').select('*, user_stores(store_id, role, stores(id, name, name_kana))').eq('email', email).single()
   return data
-}
-
-export async function ensureUser(userId, email, companyId, opts = {}) {
-  // 既存チェック
-  const { data: existing } = await supabase.from('users').select('id').eq('id', userId).maybeSingle()
-  if (existing) {
-    const updates = { company_id: companyId }
-    if (opts.display_name) updates.display_name = opts.display_name
-    if (opts.employee_id) updates.employee_id = opts.employee_id
-    const { error } = await supabase.from('users').update(updates).eq('id', userId)
-    if (error) console.error('ensureUser update error:', error)
-  } else {
-    const { error } = await supabase.from('users').insert({
-      id: userId, email, role: 'pharmacist',
-      display_name: opts.display_name || email.split('@')[0],
-      employee_id: opts.employee_id || '',
-      company_id: companyId,
-      is_approved: false
-    })
-    if (error) console.error('ensureUser insert error:', error)
-  }
-}
-
-// === 承認管理 ===
-export async function getPendingUsers(companyId) {
-  let q = supabase.from('users').select('*').eq('is_approved', false).order('created_at', { ascending: false })
-  if (companyId) q = q.eq('company_id', companyId)
-  const { data } = await q
-  return data || []
-}
-
-export async function approveUsers(userIds) {
-  const { error } = await supabase.from('users').update({ is_approved: true }).in('id', userIds)
-  if (error) throw error
-}
-
-export async function rejectUser(userId) {
-  // ユーザーを削除（user_storesも cascade で削除）
-  await supabase.from('users').delete().eq('id', userId)
-}
-
-// === Store ===
-export async function searchStores(query, companyId) {
-  const q = query.trim()
-  let builder = supabase.from('stores').select('id, name, name_kana').eq('is_active', true).order('name_kana').limit(50)
-  if (companyId) builder = builder.eq('company_id', companyId)
-  if (q) builder = builder.or(`name.ilike.%${q}%,name_kana.ilike.%${q}%`)
-  const { data } = await builder
-  return data || []
-}
-
-export async function linkUserToStore(userId, storeId, role = 'pharmacist') {
-  const { error } = await supabase.from('user_stores').upsert(
-    { user_id: userId, store_id: storeId, role },
-    { onConflict: 'user_id,store_id' }
-  )
-  if (error) throw error
 }
 
 // === API Keys (DB関数経由で安全に取得) ===
@@ -112,7 +41,6 @@ export async function getApiKey(service, storeId) {
     })
     if (error) {
       console.warn('getApiKey rpc error, falling back:', error.message)
-      // フォールバック: 直接SELECTを試す（admin権限がある場合）
       if (storeId) {
         const { data: d } = await supabase.from('api_keys').select('api_key').eq('service', service).eq('store_id', storeId).eq('is_active', true).single()
         if (d?.api_key) return d.api_key
@@ -152,13 +80,6 @@ export async function deleteRecord(id) {
   const { error } = await supabase.from('records').delete().eq('id', id)
   if (error) throw error
 }
-export async function testConnection() {
-  try {
-    const { data, error } = await supabase.from('records').select('id').limit(1)
-    if (error) return { ok: false, error: error.message }
-    return { ok: true, message: `接続OK (${data.length}件取得)` }
-  } catch (e) { return { ok: false, error: e.message } }
-}
 
 // === Usage Log ===
 export async function logUsage(action, storeId, userId, durationSec) {
@@ -170,7 +91,7 @@ export async function logUsage(action, storeId, userId, durationSec) {
 // === Drug Master ===
 let drugCache = null
 let drugCacheTime = 0
-const DRUG_CACHE_TTL = 30 * 60 * 1000 // 30分キャッシュ
+const DRUG_CACHE_TTL = 30 * 60 * 1000
 
 export async function loadDrugMaster() {
   if (drugCache && Date.now() - drugCacheTime < DRUG_CACHE_TTL) return drugCache
@@ -182,42 +103,21 @@ export async function loadDrugMaster() {
 
 export function correctDrugNames(text, drugs) {
   if (!text || !drugs?.length) return { text, corrections: [] }
-  
   const corrections = []
   let result = text
-
-  // ひらがな→カタカナ変換（照合用）
   const toKata = (s) => s.replace(/[\u3041-\u3096]/g, c => String.fromCharCode(c.charCodeAt(0) + 0x60))
   const toHira = (s) => s.replace(/[\u30A1-\u30F6]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60))
-
   for (const drug of drugs) {
     const name = drug.ingredient_name
-    // すでに正式名称が含まれていればスキップ
     if (result.includes(name)) continue
-
-    // aliases + ひらがな読み + カタカナ読みで照合
-    const candidates = [
-      drug.reading_kana,
-      drug.reading_kata,
-      toKata(drug.reading_kana),
-      toHira(drug.reading_kata || ''),
-      ...(drug.aliases || [])
-    ].filter(Boolean)
-
+    const candidates = [drug.reading_kana, drug.reading_kata, toKata(drug.reading_kana), toHira(drug.reading_kata || ''), ...(drug.aliases || [])].filter(Boolean)
     for (const alias of candidates) {
       if (!alias || alias === name) continue
-      // 大文字小文字・全角半角を考慮せず単純照合
-      if (result.includes(alias)) {
-        result = result.split(alias).join(name)
-        corrections.push({ from: alias, to: name })
-        break
-      }
+      if (result.includes(alias)) { result = result.split(alias).join(name); corrections.push({ from: alias, to: name }); break }
     }
   }
   return { text: result, corrections }
 }
 
-export function invalidateDrugCache() {
-  drugCache = null
-  drugCacheTime = 0
-}
+export function invalidateDrugCache() { drugCache = null; drugCacheTime = 0 }
+
